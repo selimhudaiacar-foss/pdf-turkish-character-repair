@@ -4,6 +4,8 @@ PDF dosyalarında kopyalama sırasında bozulan Turkce karakterleri duzeltir.
 
 Bazi PDF'lerde metin ekranda dogru gorunur ama kopyalandiginda `g`, `i` veya `s` ailesindeki Turkce karakterler bozulur. Sorun genelde PDF icindeki font `ToUnicode CMap` eslemelerinin hatali olmasindan kaynaklanir. Bu proje PDF'i yeniden olusturmaz; sadece hatali Unicode eslemelerini yerinde yamalar.
 
+> Not: Kurulum, calistirma, test ve gelistirme komutlarinin tamami icin bir sanal ortam (`venv`) kullanmaniz tavsiye edilir.
+
 ## Ne ise yarar?
 
 Su tip bozulmalari hedefler:
@@ -90,6 +92,8 @@ cd pdf-turkish-character-repair
 
 ### Sanal ortam ve bagimliliklar
 
+Asagidaki kurulum akisi tavsiye edilen yoldur; komutlari bir `venv` icinde calistirin.
+
 ```bash
 python3 -m venv venv
 source venv/bin/activate
@@ -106,6 +110,8 @@ pip install -r requirements.txt
 
 ## Hizli baslangic
 
+Bu bolumdeki tum komutlar, aktif bir `venv` icinde calistiriliyor varsayimi ile verilmiştir.
+
 ### Web arayuzu
 
 ```bash
@@ -113,6 +119,12 @@ python3 app.py
 ```
 
 Ardindan tarayicida `http://127.0.0.1:5000` adresini acin.
+
+Dil secimi:
+
+- Varsayilan dil tarayici diline gore belirlenebilir
+- Elle secmek icin `/?lang=tr` veya `/?lang=en` kullanabilirsiniz
+- Arayuzun sag ustunde `TR / EN` gecisi bulunur
 
 Akis:
 
@@ -145,6 +157,18 @@ Sadece analiz:
 python3 pdf_tr_fix.py belge.pdf --analyze
 ```
 
+Ingilizce cikti:
+
+```bash
+python3 pdf_tr_fix.py --lang en belge.pdf
+```
+
+Turkce ciktiyi zorlamak icin:
+
+```bash
+python3 pdf_tr_fix.py --lang tr belge.pdf
+```
+
 ## Ornek CLI cikti
 
 ```text
@@ -174,7 +198,7 @@ Bu endpoint'ler esasen tarayici arayuzu icin tasarlanmistir; resmi public API so
 
 ## Guvenlik notlari
 
-`v2.2.0` ile birlikte su sertlestirmeler eklendi:
+Guncel surumlerde su sertlestirmeler bulunur:
 
 - Yuklenen dosya PDF imzasi icin dogrulaniyor
 - Asiri buyuk `CMap` akislari reddediliyor
@@ -212,16 +236,20 @@ CHANGELOG.md     Surum notlari
 
 ## Gelistirme
 
+Gelistirme araclarini da ayri bir `venv` icinde calistirmaniz tavsiye edilir.
+
 Yerelde hizli dogrulama icin:
 
 ```bash
-python3 -m py_compile app.py pdf_tr_fix.py
+source venv/bin/activate
+python -m py_compile app.py pdf_tr_fix.py
 ```
 
 Bagimlilik denetimi:
 
 ```bash
-./bin/python -m pip_audit
+source venv/bin/activate
+python -m pip_audit
 ```
 
 ## Sinirlar

@@ -1,5 +1,39 @@
 # Changelog
 
+## v2.3.0 - 2026-03-09
+
+Bu sürüm dil desteği ve dokümantasyon iyileştirmelerine odaklanır. Web arayüzü ve CLI artık Türkçe ile birlikte İngilizce de destekler; ayrıca kurulum ve geliştirme akışlarında `venv` kullanımı daha görünür hale getirilmiştir.
+
+### Eklenenler
+
+- Web arayüzüne TR/EN dil desteği eklendi.
+- CLI aracına `--lang {tr,en}` seçeneği eklendi.
+- Web tarafında dil seçimi için `TR / EN` geçişi eklendi.
+- Tarayıcı dili ve istek parametresine göre dil belirleme akışı eklendi.
+
+### İyileştirmeler
+
+- Web arayüzündeki statik ve dinamik metinler yerelleştirildi.
+- API hata mesajları seçilen dile göre döndürülür hale getirildi.
+- İndirilen dosya adı dile göre `_onarildi` veya `_repaired` son eki alacak şekilde güncellendi.
+- CLI yardım metinleri ve çıktı mesajları seçilen dile göre uyarlanır hale getirildi.
+- `README.md` dosyası, dil desteği ve `venv` tavsiyesi açısından genişletildi.
+
+### Dokümantasyon
+
+- Kurulum, hızlı başlangıç ve geliştirme bölümlerine `venv` kullanım tavsiyesi eklendi.
+- Web için `/?lang=en` ve `/?lang=tr` kullanımı belgelendi.
+- CLI için İngilizce ve Türkçe kullanım örnekleri eklendi.
+
+### Doğrulama
+
+- `python3 -m py_compile app.py pdf_tr_fix.py`
+- Web arayüzü `?lang=en` render testi
+- İngilizce API hata yanıtı testi
+- İngilizce `Content-Disposition` dosya adı testi
+- CLI `--lang en --help` testi
+- CLI `--lang en --analyze` testi
+
 ## v2.2.0 - 2026-03-09
 
 Bu sürüm güvenlik sertleştirmesine odaklanır. Web arayüzü ve CLI, güvenilmeyen PDF girdilerine karşı daha sıkı doğrulama ve daha kontrollü hata yönetimi ile güncellendi.

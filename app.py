@@ -7,10 +7,14 @@ but produce garbled text when copied (ğ→control, ı→1, İ→1, ş→_, Ş�
 Works by patching the font ToUnicode CMap tables in-place.
 No text extraction, no PDF regeneration — zero data loss.
 
+Recommended setup:
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
+
 Usage:
-    pip install flask pikepdf
     python app.py
-    → http://localhost:5000
+    → http://127.0.0.1:5000
 
 See pdf_tr_fix.py for the CLI version.
 """
@@ -30,11 +34,137 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 app.config['MAX_FORM_MEMORY_SIZE'] = 1024 * 1024
 
+VERSION = 'v2.3.0'
+SUPPORTED_LANGUAGES = ('tr', 'en')
 PDF_HEADER_SCAN_BYTES = 1024
 MAX_CMAP_BYTES = 2 * 1024 * 1024
 MAX_BFRANGE_SPAN = 65536
 MAX_CMAP_ENTRIES = 131072
 OUTPUT_BUFFER_LIMIT = 2 * 1024 * 1024
+
+TEXTS = {
+    'tr': {
+        'page_title': 'PDF Onarıcı',
+        'app_name': 'PDF Onarıcı',
+        'status_ready': 'Hazır',
+        'engine_name': 'CMap Patch Engine',
+        'language_label': 'Dil',
+        'panel_file': 'Dosya',
+        'drop_title': "PDF'i bırakın veya tıklayın",
+        'drop_hint': 'Maks. {size} MB · .pdf',
+        'file_thumb': 'PDF',
+        'remove_file': 'Kaldır',
+        'panel_repaired_characters': 'Onarılan Karakterler',
+        'btn_analyze_fix': 'Analiz Et & Onar',
+        'step_upload': 'Dosya yükle',
+        'step_analyze': 'Analiz',
+        'step_repair': 'Onarım',
+        'step_download': 'İndir',
+        'terminal_title': 'cmap-patch.log',
+        'engine_ready_waiting': 'Motor hazır. Dosya bekleniyor…',
+        'processing': 'İşleniyor…',
+        'stat_pages': 'Sayfa',
+        'stat_fonts': 'Font',
+        'stat_issue_types': 'Hata türü',
+        'stat_patches': 'Patch',
+        'download': 'İndir',
+        'footer_text': 'Font ToUnicode CMap · In-place patch · Sıfır veri kaybı',
+        'select_pdf_error': 'Lütfen bir .pdf dosyası seçin',
+        'file_uploaded': 'Dosya yüklendi: {name} ({size})',
+        'no_issues': 'Türkçe karakter hatası bulunamadı',
+        'analysis_started': 'Analiz başladı…',
+        'scanning_cmaps': 'CMap tabloları taranıyor…',
+        'server_error': 'Sunucu hatası: {message}',
+        'analysis_completed': 'Analiz tamamlandı: {font_count} font, {fix_count} hata türü',
+        'clean_pdf': 'Bu PDF temiz görünüyor.',
+        'affected_fonts': '{mapping} — {count} font etkilenmiş',
+        'patching_fonts': 'Font tabloları yamalanıyor…',
+        'repair_error': 'Onarım hatası: {message}',
+        'repair_failed': 'Onarım başarısız.',
+        'repair_completed': 'Onarım tamamlandı — {elapsed}s sürdü',
+        'output_ready': 'Çıktı: {name} ({size})',
+        'download_note': '{elapsed}s — {size}',
+        'result_count': '{count} font',
+        'output_suffix': '_onarildi',
+        'upload_missing': 'PDF bulunamadı',
+        'upload_pdf_only': 'Sadece .pdf dosyalari kabul edilir',
+        'upload_invalid_pdf': 'Gecerli bir PDF yukleyin',
+        'cmap_stream_too_large': 'CMap akisi beklenenden buyuk',
+        'cmap_invalid_range': 'Gecersiz CMap araligi',
+        'cmap_range_limit': 'CMap araligi guvenlik limitini asiyor',
+        'cmap_entries_limit': 'CMap esleme sayisi guvenlik limitini asiyor',
+        'pdf_security_limit': 'PDF guvenlik sinirlarini asiyor',
+        'request_too_large': 'PDF boyutu {mb} MB sinirini asiyor',
+        'bad_request': 'Istek gecersiz veya eksik',
+        'unexpected_error': 'Islem sirasinda beklenmeyen bir hata olustu',
+        'desc_control_char': 'Görünmez kontrol karakteri',
+        'desc_digit_one': 'Rakam "1" olarak kodlanmış',
+        'desc_underscore': 'Alt çizgi "_" olarak kodlanmış',
+    },
+    'en': {
+        'page_title': 'PDF Repair',
+        'app_name': 'PDF Repair',
+        'status_ready': 'Ready',
+        'engine_name': 'CMap Patch Engine',
+        'language_label': 'Language',
+        'panel_file': 'File',
+        'drop_title': 'Drop a PDF here or click to browse',
+        'drop_hint': 'Max {size} MB · .pdf',
+        'file_thumb': 'PDF',
+        'remove_file': 'Remove',
+        'panel_repaired_characters': 'Repaired Characters',
+        'btn_analyze_fix': 'Analyze & Repair',
+        'step_upload': 'Upload file',
+        'step_analyze': 'Analyze',
+        'step_repair': 'Repair',
+        'step_download': 'Download',
+        'terminal_title': 'cmap-patch.log',
+        'engine_ready_waiting': 'Engine ready. Waiting for a file…',
+        'processing': 'Processing…',
+        'stat_pages': 'Pages',
+        'stat_fonts': 'Fonts',
+        'stat_issue_types': 'Issue types',
+        'stat_patches': 'Patches',
+        'download': 'Download',
+        'footer_text': 'Font ToUnicode CMap · In-place patch · Zero data loss',
+        'select_pdf_error': 'Please select a .pdf file',
+        'file_uploaded': 'File loaded: {name} ({size})',
+        'no_issues': 'No Turkish character issues were detected',
+        'analysis_started': 'Analysis started…',
+        'scanning_cmaps': 'Scanning CMap tables…',
+        'server_error': 'Server error: {message}',
+        'analysis_completed': 'Analysis complete: {font_count} fonts, {fix_count} issue types',
+        'clean_pdf': 'This PDF looks clean.',
+        'affected_fonts': '{mapping} — {count} {font_word} affected',
+        'patching_fonts': 'Patching font tables…',
+        'repair_error': 'Repair error: {message}',
+        'repair_failed': 'Repair failed.',
+        'repair_completed': 'Repair complete — took {elapsed}s',
+        'output_ready': 'Output: {name} ({size})',
+        'download_note': '{elapsed}s — {size}',
+        'result_count': '{count} {font_word}',
+        'output_suffix': '_repaired',
+        'upload_missing': 'PDF file not found',
+        'upload_pdf_only': 'Only .pdf files are accepted',
+        'upload_invalid_pdf': 'Please upload a valid PDF',
+        'cmap_stream_too_large': 'CMap stream is larger than the safety limit',
+        'cmap_invalid_range': 'Invalid CMap range',
+        'cmap_range_limit': 'CMap range exceeds the safety limit',
+        'cmap_entries_limit': 'CMap mapping count exceeds the safety limit',
+        'pdf_security_limit': 'PDF exceeds processing safety limits',
+        'request_too_large': 'PDF size exceeds the {mb} MB limit',
+        'bad_request': 'Request is invalid or incomplete',
+        'unexpected_error': 'An unexpected error occurred during processing',
+        'desc_control_char': 'Invisible control character',
+        'desc_digit_one': 'Encoded as the digit "1"',
+        'desc_underscore': 'Encoded as an underscore "_"',
+    },
+}
+
+LANGUAGE_OPTIONS = (
+    ('tr', 'TR'),
+    ('en', 'EN'),
+)
 
 
 class UploadValidationError(ValueError):
@@ -45,17 +175,63 @@ class PDFSecurityError(ValueError):
     pass
 
 
-def validate_pdf_upload(upload):
+def normalize_language(value):
+    if not value:
+        return None
+    value = value.strip().lower()
+    for lang in SUPPORTED_LANGUAGES:
+        if value == lang or value.startswith(f'{lang}-') or value.startswith(f'{lang}_'):
+            return lang
+    return None
+
+
+def get_request_language():
+    lang = normalize_language(request.args.get('lang'))
+    if lang:
+        return lang
+    lang = normalize_language(request.headers.get('X-App-Lang'))
+    if lang:
+        return lang
+    try:
+        lang = normalize_language(request.form.get('lang'))
+        if lang:
+            return lang
+    except (BadRequest, RequestEntityTooLarge):
+        pass
+    return request.accept_languages.best_match(SUPPORTED_LANGUAGES) or 'tr'
+
+
+def get_texts(lang):
+    return TEXTS[lang]
+
+
+def translate(key, lang, **kwargs):
+    text = get_texts(lang)[key]
+    return text.format(**kwargs) if kwargs else text
+
+
+def get_fix_labels(lang):
+    return {
+        (0x001F, 0x011F): ('ğ', 'U+001F → U+011F', translate('desc_control_char', lang)),
+        (0x001E, 0x011E): ('Ğ', 'U+001E → U+011E', translate('desc_control_char', lang)),
+        (0x0031, 0x0131): ('ı', 'U+0031 → U+0131', translate('desc_digit_one', lang)),
+        (0x0031, 0x0130): ('İ', 'U+0031 → U+0130', translate('desc_digit_one', lang)),
+        (0x005F, 0x015F): ('ş', 'U+005F → U+015F', translate('desc_underscore', lang)),
+        (0x005F, 0x015E): ('Ş', 'U+005F → U+015E', translate('desc_underscore', lang)),
+    }
+
+
+def validate_pdf_upload(upload, lang):
     if upload is None or not upload.filename:
-        raise UploadValidationError('PDF bulunamadı')
+        raise UploadValidationError(translate('upload_missing', lang))
 
     if not upload.filename.lower().endswith('.pdf'):
-        raise UploadValidationError('Sadece .pdf dosyalari kabul edilir')
+        raise UploadValidationError(translate('upload_pdf_only', lang))
 
     header = upload.stream.read(PDF_HEADER_SCAN_BYTES)
     upload.stream.seek(0)
     if b'%PDF-' not in header:
-        raise UploadValidationError('Gecerli bir PDF yukleyin')
+        raise UploadValidationError(translate('upload_invalid_pdf', lang))
 
     return upload
 
@@ -66,37 +242,37 @@ def open_pdf(source):
     return pikepdf.open(source, attempt_recovery=False, suppress_warnings=True)
 
 
-def read_cmap_text(cmap_stream):
+def read_cmap_text(cmap_stream, lang):
     try:
         declared_length = int(cmap_stream.get('/Length', 0))
     except Exception:
         declared_length = 0
 
     if declared_length and declared_length > MAX_CMAP_BYTES:
-        raise PDFSecurityError('CMap akisi beklenenden buyuk')
+        raise PDFSecurityError(translate('cmap_stream_too_large', lang))
 
     cmap_bytes = bytes(cmap_stream.read_bytes())
     if len(cmap_bytes) > MAX_CMAP_BYTES:
-        raise PDFSecurityError('CMap akisi beklenenden buyuk')
+        raise PDFSecurityError(translate('cmap_stream_too_large', lang))
 
     return cmap_bytes.decode('latin-1')
 
 
-def consume_mapping_budget(total_entries, span):
+def consume_mapping_budget(total_entries, span, lang):
     if span <= 0:
-        raise PDFSecurityError('Gecersiz CMap araligi')
+        raise PDFSecurityError(translate('cmap_invalid_range', lang))
     if span > MAX_BFRANGE_SPAN:
-        raise PDFSecurityError('CMap araligi guvenlik limitini asiyor')
+        raise PDFSecurityError(translate('cmap_range_limit', lang))
 
     total_entries += span
     if total_entries > MAX_CMAP_ENTRIES:
-        raise PDFSecurityError('CMap esleme sayisi guvenlik limitini asiyor')
+        raise PDFSecurityError(translate('cmap_entries_limit', lang))
     return total_entries
 
 
-def safe_download_name(filename):
+def safe_download_name(filename, lang):
     stem = Path(secure_filename(filename or 'document.pdf')).stem or 'document'
-    return f'{stem}_onarildi.pdf'
+    return f"{stem}{translate('output_suffix', lang)}.pdf"
 
 
 def json_error(message, status):
@@ -107,26 +283,29 @@ def max_upload_limit_mb():
     return max(1, app.config['MAX_CONTENT_LENGTH'] // (1024 * 1024))
 
 
-def handle_api_exception(exc):
+def handle_api_exception(exc, lang=None):
+    lang = lang or get_request_language()
     if isinstance(exc, UploadValidationError):
         return json_error(str(exc), 400)
     if isinstance(exc, PDFSecurityError):
         app.logger.warning('Blocked suspicious PDF: %s', exc)
-        return json_error('PDF guvenlik sinirlarini asiyor', 400)
+        return json_error(translate('pdf_security_limit', lang), 400)
     if isinstance(exc, pikepdf.PdfError):
-        return json_error('Gecerli bir PDF yukleyin', 400)
+        return json_error(translate('upload_invalid_pdf', lang), 400)
     if isinstance(exc, RequestEntityTooLarge):
-        return json_error(f'PDF boyutu {max_upload_limit_mb()} MB sinirini asiyor', 413)
+        return json_error(translate('request_too_large', lang, mb=max_upload_limit_mb()), 413)
     if isinstance(exc, BadRequest):
-        return json_error('Istek gecersiz veya eksik', 400)
+        return json_error(translate('bad_request', lang), 400)
 
     app.logger.exception('Unexpected PDF processing error')
-    return json_error('Islem sirasinda beklenmeyen bir hata olustu', 500)
+    return json_error(translate('unexpected_error', lang), 500)
 
 
 @app.before_request
 def set_csp_nonce():
     g.csp_nonce = secrets.token_urlsafe(16)
+    g.lang = get_request_language()
+    g.texts = get_texts(g.lang)
 
 
 @app.after_request
@@ -158,17 +337,17 @@ def add_security_headers(response):
         response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
     return response
 
-def parse_mappings(cmap_text):
+def parse_mappings(cmap_text, lang):
     mappings = {}
     total_entries = 0
     for block in re.findall(r'beginbfrange(.*?)endbfrange', cmap_text, re.DOTALL):
         for m in re.finditer(r'<([0-9A-Fa-f]+)><([0-9A-Fa-f]+)><([0-9A-Fa-f]+)>', block):
             s,e,b = int(m.group(1),16),int(m.group(2),16),int(m.group(3),16)
-            total_entries = consume_mapping_budget(total_entries, e - s + 1)
+            total_entries = consume_mapping_budget(total_entries, e - s + 1, lang)
             for i,c in enumerate(range(s,e+1)): mappings[c]=b+i
     for block in re.findall(r'beginbfchar(.*?)endbfchar', cmap_text, re.DOTALL):
         for m in re.finditer(r'<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>', block):
-            total_entries = consume_mapping_budget(total_entries, 1)
+            total_entries = consume_mapping_budget(total_entries, 1, lang)
             mappings[int(m.group(1),16)]=int(m.group(2),16)
     return mappings
 
@@ -200,17 +379,10 @@ def patch_cmap(cmap_text,fixes):
         count+=n
     return cmap_text,count
 
-def analyze_pdf(pdf_source):
+def analyze_pdf(pdf_source, lang):
     pdf = open_pdf(pdf_source)
     seen=set(); summary=defaultdict(int); page_count=len(pdf.pages)
-    LABELS={
-        (0x001F,0x011F):('ğ','U+001F → U+011F','Görünmez kontrol karakteri'),
-        (0x001E,0x011E):('Ğ','U+001E → U+011E','Görünmez kontrol karakteri'),
-        (0x0031,0x0131):('ı','U+0031 → U+0131','Rakam "1" olarak kodlanmış'),
-        (0x0031,0x0130):('İ','U+0031 → U+0130','Rakam "1" olarak kodlanmış'),
-        (0x005F,0x015F):('ş','U+005F → U+015F','Alt çizgi "_" olarak kodlanmış'),
-        (0x005F,0x015E):('Ş','U+005F → U+015E','Alt çizgi "_" olarak kodlanmış'),
-    }
+    labels = get_fix_labels(lang)
     try:
         for page in pdf.pages:
             try:
@@ -221,8 +393,8 @@ def analyze_pdf(pdf_source):
                     except Exception: continue
                     if objnum in seen or '/ToUnicode' not in fobj: continue
                     seen.add(objnum)
-                    cmap=read_cmap_text(fobj['/ToUnicode'])
-                    for _,(wrong,correct) in find_fixes(parse_mappings(cmap)).items():
+                    cmap=read_cmap_text(fobj['/ToUnicode'], lang)
+                    for _,(wrong,correct) in find_fixes(parse_mappings(cmap, lang)).items():
                         summary[(wrong,correct)]+=1
             except PDFSecurityError:
                 raise
@@ -230,13 +402,13 @@ def analyze_pdf(pdf_source):
                 continue
         results=[]
         for (wrong,correct),cnt in sorted(summary.items(),key=lambda x:-x[1]):
-            char,mapping,desc=LABELS.get((wrong,correct),(f'?',f'U+{wrong:04X}→U+{correct:04X}',''))
+            char,mapping,desc=labels.get((wrong,correct),(f'?',f'U+{wrong:04X}→U+{correct:04X}',''))
             results.append({'char':char,'mapping':mapping,'desc':desc,'count':cnt})
         return results, len(seen), page_count
     finally:
         pdf.close()
 
-def fix_pdf_stream(pdf_source):
+def fix_pdf_stream(pdf_source, lang):
     pdf = open_pdf(pdf_source); seen=set(); total=0; fonts_fixed=0
     try:
         for page in pdf.pages:
@@ -248,8 +420,8 @@ def fix_pdf_stream(pdf_source):
                     except Exception: continue
                     if objnum in seen or '/ToUnicode' not in fobj: continue
                     seen.add(objnum)
-                    cmap_text=read_cmap_text(fobj['/ToUnicode'])
-                    fixes=find_fixes(parse_mappings(cmap_text))
+                    cmap_text=read_cmap_text(fobj['/ToUnicode'], lang)
+                    fixes=find_fixes(parse_mappings(cmap_text, lang))
                     if not fixes: continue
                     new_cmap,count=patch_cmap(cmap_text,fixes)
                     if count>0:
@@ -267,11 +439,11 @@ def fix_pdf_stream(pdf_source):
         pdf.close()
 
 HTML = r"""<!DOCTYPE html>
-<html lang="tr">
+<html lang="{{ lang }}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PDF Onarıcı</title>
+<title>{{ t.page_title }}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@300;400;500&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -368,6 +540,32 @@ body::after {
   display: flex;
   align-items: center;
   gap: 1.5rem;
+}
+
+.lang-switch {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+}
+
+.lang-label {
+  color: var(--ink-faint);
+}
+
+.lang-link {
+  color: var(--ink-dim);
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: .2rem .45rem;
+  transition: border-color .15s, color .15s, background .15s;
+}
+
+.lang-link:hover,
+.lang-link.active {
+  color: var(--gold);
+  border-color: rgba(212,168,83,0.35);
+  background: rgba(212,168,83,0.08);
 }
 
 .status-dot {
@@ -946,12 +1144,18 @@ body::after {
   <!-- ── Topbar ── -->
   <header class="topbar">
     <div class="logo">
-      <span class="logo-serif">PDF Onarıcı</span>
-      <span class="logo-tag">v2.2.0</span>
+      <span class="logo-serif">{{ t.app_name }}</span>
+      <span class="logo-tag">v{{ version }}</span>
     </div>
     <div class="topbar-right">
-      <span class="status-dot">Hazır</span>
-      <span>CMap Patch Engine</span>
+      <div class="lang-switch">
+        <span class="lang-label">{{ t.language_label }}</span>
+        {% for option_code, option_label in lang_options %}
+        <a class="lang-link {% if lang == option_code %}active{% endif %}" href="/?lang={{ option_code }}">{{ option_label }}</a>
+        {% endfor %}
+      </div>
+      <span class="status-dot">{{ t.status_ready }}</span>
+      <span>{{ t.engine_name }}</span>
     </div>
   </header>
 
@@ -959,23 +1163,23 @@ body::after {
   <aside class="left-panel">
 
     <div>
-      <div class="panel-label">Dosya</div>
+      <div class="panel-label">{{ t.panel_file }}</div>
 
       <div class="drop-zone" id="dropZone">
         <span class="drop-glyph">Aa</span>
-        <div class="drop-title">PDF'i bırakın veya tıklayın</div>
-        <div class="drop-hint">Maks. 100 MB · .pdf</div>
+        <div class="drop-title">{{ t.drop_title }}</div>
+        <div class="drop-hint">{{ drop_hint }}</div>
         <input type="file" id="fileInput" accept=".pdf">
       </div>
 
       <div class="file-card" id="fileCard">
         <div class="file-card-top">
-          <div class="file-thumb">PDF</div>
+          <div class="file-thumb">{{ t.file_thumb }}</div>
           <div class="file-meta">
             <div class="file-name-text" id="fileName"></div>
             <div class="file-size-text" id="fileSize"></div>
           </div>
-          <button class="btn-clear" id="btnClear" title="Kaldır">
+          <button class="btn-clear" id="btnClear" title="{{ t.remove_file }}">
             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <line x1="18" y1="6" x2="6" y2="18"/>
               <line x1="6" y1="6" x2="18" y2="18"/>
@@ -986,7 +1190,7 @@ body::after {
     </div>
 
     <div>
-      <div class="panel-label">Onarılan Karakterler</div>
+      <div class="panel-label">{{ t.panel_repaired_characters }}</div>
       <div class="char-grid" id="charGrid">
         <div class="char-cell" data-char="ğ">ğ</div>
         <div class="char-cell" data-char="Ğ">Ğ</div>
@@ -999,7 +1203,7 @@ body::after {
 
     <div style="margin-top:auto">
       <button class="btn-primary" id="btnFix" disabled>
-        Analiz Et &amp; Onar
+        {{ t.btn_analyze_fix }}
       </button>
     </div>
 
@@ -1012,19 +1216,19 @@ body::after {
     <div class="steps" id="stepsRow">
       <div class="step" id="step1">
         <div class="step-num">1</div>
-        <span>Dosya yükle</span>
+        <span>{{ t.step_upload }}</span>
       </div>
       <div class="step" id="step2">
         <div class="step-num">2</div>
-        <span>Analiz</span>
+        <span>{{ t.step_analyze }}</span>
       </div>
       <div class="step" id="step3">
         <div class="step-num">3</div>
-        <span>Onarım</span>
+        <span>{{ t.step_repair }}</span>
       </div>
       <div class="step" id="step4">
         <div class="step-num">4</div>
-        <span>İndir</span>
+        <span>{{ t.step_download }}</span>
       </div>
     </div>
 
@@ -1034,12 +1238,12 @@ body::after {
         <div class="term-dot" style="background:#ff5f56"></div>
         <div class="term-dot" style="background:#ffbd2e"></div>
         <div class="term-dot" style="background:#27c93f"></div>
-        <div class="terminal-title">cmap-patch.log</div>
+        <div class="terminal-title">{{ t.terminal_title }}</div>
       </div>
       <div class="terminal-body" id="logBody">
         <div class="log-line">
           <span class="log-time">00:00</span>
-          <span class="log-info">Motor hazır. Dosya bekleniyor…</span>
+          <span class="log-info">{{ t.engine_ready_waiting }}</span>
         </div>
       </div>
     </div>
@@ -1049,26 +1253,26 @@ body::after {
       <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
       </svg>
-      <span id="spinText">İşleniyor…</span>
+      <span id="spinText">{{ t.processing }}</span>
     </div>
 
     <!-- Stat bar -->
     <div class="stat-bar" id="statBar">
       <div class="stat-cell">
         <div class="stat-val" id="statPages">—</div>
-        <div class="stat-key">Sayfa</div>
+        <div class="stat-key">{{ t.stat_pages }}</div>
       </div>
       <div class="stat-cell">
         <div class="stat-val" id="statFonts">—</div>
-        <div class="stat-key">Font</div>
+        <div class="stat-key">{{ t.stat_fonts }}</div>
       </div>
       <div class="stat-cell">
         <div class="stat-val" id="statTypes">—</div>
-        <div class="stat-key">Hata türü</div>
+        <div class="stat-key">{{ t.stat_issue_types }}</div>
       </div>
       <div class="stat-cell">
         <div class="stat-val" id="statPatches">—</div>
-        <div class="stat-key">Patch</div>
+        <div class="stat-key">{{ t.stat_patches }}</div>
       </div>
     </div>
 
@@ -1083,7 +1287,7 @@ body::after {
           <polyline points="7 10 12 15 17 10"/>
           <line x1="12" y1="15" x2="12" y2="3"/>
         </svg>
-        <span id="dlBtnText">İndir</span>
+        <span id="dlBtnText">{{ t.download }}</span>
       </a>
       <div class="dl-note" id="dlNote"></div>
     </div>
@@ -1092,7 +1296,7 @@ body::after {
 
   <!-- ── Footer ── -->
   <footer class="footer">
-    <span>Font ToUnicode CMap · In-place patch · Sıfır veri kaybı</span>
+    <span>{{ t.footer_text }}</span>
     <span>ğ ı İ ş Ş Ğ</span>
   </footer>
 
@@ -1101,6 +1305,8 @@ body::after {
 <div class="toast" id="toast"></div>
 
 <script nonce="{{ csp_nonce }}">
+const M = {{ messages|tojson }};
+const currentLang = {{ lang|tojson }};
 let selectedFile = null;
 let startTime = null;
 
@@ -1124,6 +1330,24 @@ const charGrid  = document.getElementById('charGrid');
 
 const steps = [1,2,3,4].map(i => document.getElementById('step'+i));
 
+function t(key, params = {}) {
+  let text = M[key] ?? key;
+  for (const [name, value] of Object.entries(params)) {
+    text = text.replaceAll(`{${name}}`, String(value));
+  }
+  return text;
+}
+
+function fontWord(count) {
+  if (currentLang === 'en') return count === 1 ? 'font' : 'fonts';
+  return 'font';
+}
+
+function makeOutputName(filename) {
+  const suffix = M.output_suffix || '_repaired';
+  return filename.replace(/\.pdf$/i, `${suffix}.pdf`);
+}
+
 // ── File handling ──
 dropZone.addEventListener('dragenter', e => { e.preventDefault(); dropZone.classList.add('over'); });
 dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('over'); });
@@ -1137,7 +1361,7 @@ btnClear.addEventListener('click', clearFile);
 btnFix.addEventListener('click', startFix);
 
 function setFile(f) {
-  if (!f.name.toLowerCase().endsWith('.pdf')) { showToast('Lütfen bir .pdf dosyası seçin'); return; }
+  if (!f.name.toLowerCase().endsWith('.pdf')) { showToast(t('select_pdf_error')); return; }
   selectedFile = f;
   fileNameEl.textContent = f.name;
   fileSizeEl.textContent = fmtSize(f.size);
@@ -1146,7 +1370,7 @@ function setFile(f) {
   btnFix.disabled = false;
   setStep(1);
   resetResults();
-  log('info', 'Dosya yüklendi: ' + f.name + ' (' + fmtSize(f.size) + ')');
+  log('info', t('file_uploaded', { name: f.name, size: fmtSize(f.size) }));
 }
 
 function clearFile() {
@@ -1158,7 +1382,7 @@ function clearFile() {
   setStep(0);
   resetResults();
   clearChars();
-  log('info', 'Motor hazır. Dosya bekleniyor…');
+  log('info', t('engine_ready_waiting'));
 }
 
 function fmtSize(b) {
@@ -1222,7 +1446,7 @@ function renderNoIssues() {
   icon.textContent = '✓';
 
   wrap.appendChild(icon);
-  wrap.appendChild(document.createTextNode('Türkçe karakter hatası bulunamadı'));
+  wrap.appendChild(document.createTextNode(t('no_issues')));
   resultsGrid.appendChild(wrap);
 }
 
@@ -1261,7 +1485,7 @@ function createResultRow(fix, index) {
 
   const count = document.createElement('div');
   count.className = 'result-count';
-  count.textContent = `${fix.count} font`;
+  count.textContent = t('result_count', { count: fix.count, font_word: fontWord(fix.count) });
 
   charWrap.appendChild(before);
   charWrap.appendChild(after);
@@ -1292,15 +1516,15 @@ async function startFix() {
   // Step 2: Analyze
   setStep(1);
   spinLine.style.display = 'flex';
-  spinText.textContent = 'CMap tabloları taranıyor…';
-  log('info', 'Analiz başladı…');
+  spinText.textContent = t('scanning_cmaps');
+  log('info', t('analysis_started'));
 
-  const f1 = new FormData(); f1.append('pdf', selectedFile);
+  const f1 = new FormData(); f1.append('pdf', selectedFile); f1.append('lang', currentLang);
   let d;
   try {
-    const r = await fetch('/analyze', { method:'POST', body:f1 });
+    const r = await fetch('/analyze', { method:'POST', body:f1, headers: { 'X-App-Lang': currentLang } });
     d = await r.json();
-  } catch(e) { spinLine.style.display='none'; log('err','Sunucu hatası: '+e.message); btnFix.disabled=false; return; }
+  } catch(e) { spinLine.style.display='none'; log('err', t('server_error', { message: e.message })); btnFix.disabled=false; return; }
 
   if (d.error) { spinLine.style.display='none'; log('err', d.error); showToast(d.error); btnFix.disabled=false; return; }
 
@@ -1312,13 +1536,13 @@ async function startFix() {
   statBar.style.display = 'grid';
 
   setStep(2);
-  log('ok', `Analiz tamamlandı: ${d.font_count} font, ${d.fixes.length} hata türü`);
+  log('ok', t('analysis_completed', { font_count: d.font_count, fix_count: d.fixes.length }));
 
   if (!d.fixes || !d.fixes.length) {
     spinLine.style.display = 'none';
     resultsGrid.style.display = 'flex';
     renderNoIssues();
-    log('ok', 'Bu PDF temiz görünüyor.');
+    log('ok', t('clean_pdf'));
     btnFix.disabled = false;
     return;
   }
@@ -1332,20 +1556,20 @@ async function startFix() {
   resultsGrid.style.display = 'flex';
   d.fixes.forEach((f, i) => {
     resultsGrid.appendChild(createResultRow(f, i));
-    log('warn', `${f.mapping} — ${f.count} font etkilenmiş`);
+    log('warn', t('affected_fonts', { mapping: f.mapping, count: f.count, font_word: fontWord(f.count) }));
   });
 
   // Step 3: Fix
-  spinText.textContent = 'Font tabloları yamalanıyor…';
+  spinText.textContent = t('patching_fonts');
   setStep(2);
 
-  const f2 = new FormData(); f2.append('pdf', selectedFile);
+  const f2 = new FormData(); f2.append('pdf', selectedFile); f2.append('lang', currentLang);
   let r2;
-  try { r2 = await fetch('/fix', { method:'POST', body:f2 }); }
-  catch(e) { spinLine.style.display='none'; log('err','Onarım hatası: '+e.message); btnFix.disabled=false; return; }
+  try { r2 = await fetch('/fix', { method:'POST', body:f2, headers: { 'X-App-Lang': currentLang } }); }
+  catch(e) { spinLine.style.display='none'; log('err', t('repair_error', { message: e.message })); btnFix.disabled=false; return; }
 
   if (!r2.ok) {
-    const message = await readJsonError(r2, 'Onarım başarısız.');
+    const message = await readJsonError(r2, t('repair_failed'));
     spinLine.style.display='none';
     log('err', message);
     showToast(message);
@@ -1358,18 +1582,18 @@ async function startFix() {
 
   const blob    = await r2.blob();
   const url     = URL.createObjectURL(blob);
-  const outName = selectedFile.name.replace(/\.pdf$/i, '_onarildi.pdf');
+  const outName = makeOutputName(selectedFile.name);
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
   dlBtn.href = url; dlBtn.download = outName;
   dlBtnText.textContent = outName;
-  dlNote.textContent = `${elapsed}s — ${fmtSize(blob.size)}`;
+  dlNote.textContent = t('download_note', { elapsed, size: fmtSize(blob.size) });
   dlSection.style.display = 'flex';
 
   spinLine.style.display = 'none';
   setStep(3);
-  log('ok', `Onarım tamamlandı — ${elapsed}s sürdü`);
-  log('ok', `Çıktı: ${outName} (${fmtSize(blob.size)})`);
+  log('ok', t('repair_completed', { elapsed }));
+  log('ok', t('output_ready', { name: outName, size: fmtSize(blob.size) }));
   btnFix.disabled = false;
 }
 </script>
@@ -1387,28 +1611,43 @@ def handle_bad_request(exc):
     return handle_api_exception(exc)
 
 @app.route('/')
-def index(): return render_template_string(HTML, csp_nonce=getattr(g, 'csp_nonce', ''))
+def index():
+    lang = getattr(g, 'lang', 'tr')
+    texts = get_texts(lang)
+    return render_template_string(
+        HTML,
+        csp_nonce=getattr(g, 'csp_nonce', ''),
+        t=texts,
+        messages=texts,
+        lang=lang,
+        version=VERSION,
+        lang_options=LANGUAGE_OPTIONS,
+        max_upload_mb=max_upload_limit_mb(),
+        drop_hint=translate('drop_hint', lang, size=max_upload_limit_mb()),
+    )
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
+    lang = get_request_language()
     try:
-        upload = validate_pdf_upload(request.files.get('pdf'))
-        fixes, font_count, page_count = analyze_pdf(upload.stream)
+        upload = validate_pdf_upload(request.files.get('pdf'), lang)
+        fixes, font_count, page_count = analyze_pdf(upload.stream, lang)
         return jsonify({'fixes': fixes, 'font_count': font_count, 'page_count': page_count})
     except Exception as exc:
-        return handle_api_exception(exc)
+        return handle_api_exception(exc, lang)
 
 @app.route('/fix', methods=['POST'])
 def fix():
+    lang = get_request_language()
     try:
-        upload = validate_pdf_upload(request.files.get('pdf'))
-        out, patch_count, _ = fix_pdf_stream(upload.stream)
+        upload = validate_pdf_upload(request.files.get('pdf'), lang)
+        out, patch_count, _ = fix_pdf_stream(upload.stream, lang)
         resp = send_file(out, mimetype='application/pdf', as_attachment=True,
-                         download_name=safe_download_name(upload.filename))
+                         download_name=safe_download_name(upload.filename, lang))
         resp.headers['X-Patch-Count'] = str(patch_count)
         return resp
     except Exception as exc:
-        return handle_api_exception(exc)
+        return handle_api_exception(exc, lang)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
