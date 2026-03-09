@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+pdf-fix-env/
+venv/
+env/
+.venv/
+bin/
+include/
+lib/
+pyvenv.cfg
+
+# PDF files (don't commit test/personal documents)
+*.pdf
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
