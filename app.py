@@ -14,22 +14,161 @@ Usage:
 
 See pdf_tr_fix.py for the CLI version.
 """
-from flask import Flask, request, send_file, render_template_string, jsonify
-import pikepdf, re, io
+import os
+import re
+import secrets
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 
+import pikepdf
+from flask import Flask, g, jsonify, render_template_string, request, send_file
+from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
+from werkzeug.utils import secure_filename
+
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
+app.config['MAX_FORM_MEMORY_SIZE'] = 1024 * 1024
+
+PDF_HEADER_SCAN_BYTES = 1024
+MAX_CMAP_BYTES = 2 * 1024 * 1024
+MAX_BFRANGE_SPAN = 65536
+MAX_CMAP_ENTRIES = 131072
+OUTPUT_BUFFER_LIMIT = 2 * 1024 * 1024
+
+
+class UploadValidationError(ValueError):
+    pass
+
+
+class PDFSecurityError(ValueError):
+    pass
+
+
+def validate_pdf_upload(upload):
+    if upload is None or not upload.filename:
+        raise UploadValidationError('PDF bulunamadı')
+
+    if not upload.filename.lower().endswith('.pdf'):
+        raise UploadValidationError('Sadece .pdf dosyalari kabul edilir')
+
+    header = upload.stream.read(PDF_HEADER_SCAN_BYTES)
+    upload.stream.seek(0)
+    if b'%PDF-' not in header:
+        raise UploadValidationError('Gecerli bir PDF yukleyin')
+
+    return upload
+
+
+def open_pdf(source):
+    if hasattr(source, 'seek'):
+        source.seek(0)
+    return pikepdf.open(source, attempt_recovery=False, suppress_warnings=True)
+
+
+def read_cmap_text(cmap_stream):
+    try:
+        declared_length = int(cmap_stream.get('/Length', 0))
+    except Exception:
+        declared_length = 0
+
+    if declared_length and declared_length > MAX_CMAP_BYTES:
+        raise PDFSecurityError('CMap akisi beklenenden buyuk')
+
+    cmap_bytes = bytes(cmap_stream.read_bytes())
+    if len(cmap_bytes) > MAX_CMAP_BYTES:
+        raise PDFSecurityError('CMap akisi beklenenden buyuk')
+
+    return cmap_bytes.decode('latin-1')
+
+
+def consume_mapping_budget(total_entries, span):
+    if span <= 0:
+        raise PDFSecurityError('Gecersiz CMap araligi')
+    if span > MAX_BFRANGE_SPAN:
+        raise PDFSecurityError('CMap araligi guvenlik limitini asiyor')
+
+    total_entries += span
+    if total_entries > MAX_CMAP_ENTRIES:
+        raise PDFSecurityError('CMap esleme sayisi guvenlik limitini asiyor')
+    return total_entries
+
+
+def safe_download_name(filename):
+    stem = Path(secure_filename(filename or 'document.pdf')).stem or 'document'
+    return f'{stem}_onarildi.pdf'
+
+
+def json_error(message, status):
+    return jsonify({'error': message}), status
+
+
+def max_upload_limit_mb():
+    return max(1, app.config['MAX_CONTENT_LENGTH'] // (1024 * 1024))
+
+
+def handle_api_exception(exc):
+    if isinstance(exc, UploadValidationError):
+        return json_error(str(exc), 400)
+    if isinstance(exc, PDFSecurityError):
+        app.logger.warning('Blocked suspicious PDF: %s', exc)
+        return json_error('PDF guvenlik sinirlarini asiyor', 400)
+    if isinstance(exc, pikepdf.PdfError):
+        return json_error('Gecerli bir PDF yukleyin', 400)
+    if isinstance(exc, RequestEntityTooLarge):
+        return json_error(f'PDF boyutu {max_upload_limit_mb()} MB sinirini asiyor', 413)
+    if isinstance(exc, BadRequest):
+        return json_error('Istek gecersiz veya eksik', 400)
+
+    app.logger.exception('Unexpected PDF processing error')
+    return json_error('Islem sirasinda beklenmeyen bir hata olustu', 500)
+
+
+@app.before_request
+def set_csp_nonce():
+    g.csp_nonce = secrets.token_urlsafe(16)
+
+
+@app.after_request
+def add_security_headers(response):
+    script_src = "script-src 'self'"
+    nonce = getattr(g, 'csp_nonce', None)
+    if nonce:
+        script_src += f" 'nonce-{nonce}'"
+    else:
+        script_src += " 'unsafe-inline'"
+
+    response.headers.setdefault(
+        'Content-Security-Policy',
+        "default-src 'self'; "
+        "img-src 'self' data: blob:; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        f"{script_src}; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "connect-src 'self'; "
+        "base-uri 'none'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
+    )
+    response.headers.setdefault('Cross-Origin-Resource-Policy', 'same-origin')
+    response.headers.setdefault('Referrer-Policy', 'no-referrer')
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('X-Frame-Options', 'DENY')
+    if request.is_secure:
+        response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+    return response
 
 def parse_mappings(cmap_text):
     mappings = {}
+    total_entries = 0
     for block in re.findall(r'beginbfrange(.*?)endbfrange', cmap_text, re.DOTALL):
         for m in re.finditer(r'<([0-9A-Fa-f]+)><([0-9A-Fa-f]+)><([0-9A-Fa-f]+)>', block):
             s,e,b = int(m.group(1),16),int(m.group(2),16),int(m.group(3),16)
+            total_entries = consume_mapping_budget(total_entries, e - s + 1)
             for i,c in enumerate(range(s,e+1)): mappings[c]=b+i
     for block in re.findall(r'beginbfchar(.*?)endbfchar', cmap_text, re.DOTALL):
         for m in re.finditer(r'<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>', block):
+            total_entries = consume_mapping_budget(total_entries, 1)
             mappings[int(m.group(1),16)]=int(m.group(2),16)
     return mappings
 
@@ -61,8 +200,8 @@ def patch_cmap(cmap_text,fixes):
         count+=n
     return cmap_text,count
 
-def analyze_pdf(pdf_bytes):
-    pdf=pikepdf.open(io.BytesIO(pdf_bytes))
+def analyze_pdf(pdf_source):
+    pdf = open_pdf(pdf_source)
     seen=set(); summary=defaultdict(int); page_count=len(pdf.pages)
     LABELS={
         (0x001F,0x011F):('ğ','U+001F → U+011F','Görünmez kontrol karakteri'),
@@ -72,46 +211,60 @@ def analyze_pdf(pdf_bytes):
         (0x005F,0x015F):('ş','U+005F → U+015F','Alt çizgi "_" olarak kodlanmış'),
         (0x005F,0x015E):('Ş','U+005F → U+015E','Alt çizgi "_" olarak kodlanmış'),
     }
-    for page in pdf.pages:
-        try:
-            fd=page.get('/Resources',{}).get('/Font',{})
-            for _,fref in fd.items():
-                fobj=fref
-                try: objnum=fobj.objgen[0]
-                except: continue
-                if objnum in seen or '/ToUnicode' not in fobj: continue
-                seen.add(objnum)
-                cmap=bytes(fobj['/ToUnicode'].read_bytes()).decode('latin-1')
-                for _,(wrong,correct) in find_fixes(parse_mappings(cmap)).items():
-                    summary[(wrong,correct)]+=1
-        except: pass
-    results=[]
-    for (wrong,correct),cnt in sorted(summary.items(),key=lambda x:-x[1]):
-        char,mapping,desc=LABELS.get((wrong,correct),(f'?',f'U+{wrong:04X}→U+{correct:04X}',''))
-        results.append({'char':char,'mapping':mapping,'desc':desc,'count':cnt})
-    return results, len(seen), page_count
+    try:
+        for page in pdf.pages:
+            try:
+                fd=page.get('/Resources',{}).get('/Font',{})
+                for _,fref in fd.items():
+                    fobj=fref
+                    try: objnum=fobj.objgen[0]
+                    except Exception: continue
+                    if objnum in seen or '/ToUnicode' not in fobj: continue
+                    seen.add(objnum)
+                    cmap=read_cmap_text(fobj['/ToUnicode'])
+                    for _,(wrong,correct) in find_fixes(parse_mappings(cmap)).items():
+                        summary[(wrong,correct)]+=1
+            except PDFSecurityError:
+                raise
+            except Exception:
+                continue
+        results=[]
+        for (wrong,correct),cnt in sorted(summary.items(),key=lambda x:-x[1]):
+            char,mapping,desc=LABELS.get((wrong,correct),(f'?',f'U+{wrong:04X}→U+{correct:04X}',''))
+            results.append({'char':char,'mapping':mapping,'desc':desc,'count':cnt})
+        return results, len(seen), page_count
+    finally:
+        pdf.close()
 
-def fix_pdf_bytes(pdf_bytes):
-    pdf=pikepdf.open(io.BytesIO(pdf_bytes)); seen=set(); total=0; fonts_fixed=0
-    for page in pdf.pages:
-        try:
-            fd=page.get('/Resources',{}).get('/Font',{})
-            for _,fref in fd.items():
-                fobj=fref
-                try: objnum=fobj.objgen[0]
-                except: continue
-                if objnum in seen or '/ToUnicode' not in fobj: continue
-                seen.add(objnum)
-                cmap_text=bytes(fobj['/ToUnicode'].read_bytes()).decode('latin-1')
-                fixes=find_fixes(parse_mappings(cmap_text))
-                if not fixes: continue
-                new_cmap,count=patch_cmap(cmap_text,fixes)
-                if count>0:
-                    fobj['/ToUnicode']=pdf.make_stream(new_cmap.encode('latin-1'))
-                    total+=count; fonts_fixed+=1
-        except: pass
-    out=io.BytesIO(); pdf.save(out); out.seek(0)
-    return out, total, fonts_fixed
+def fix_pdf_stream(pdf_source):
+    pdf = open_pdf(pdf_source); seen=set(); total=0; fonts_fixed=0
+    try:
+        for page in pdf.pages:
+            try:
+                fd=page.get('/Resources',{}).get('/Font',{})
+                for _,fref in fd.items():
+                    fobj=fref
+                    try: objnum=fobj.objgen[0]
+                    except Exception: continue
+                    if objnum in seen or '/ToUnicode' not in fobj: continue
+                    seen.add(objnum)
+                    cmap_text=read_cmap_text(fobj['/ToUnicode'])
+                    fixes=find_fixes(parse_mappings(cmap_text))
+                    if not fixes: continue
+                    new_cmap,count=patch_cmap(cmap_text,fixes)
+                    if count>0:
+                        fobj['/ToUnicode']=pdf.make_stream(new_cmap.encode('latin-1'))
+                        total+=count; fonts_fixed+=1
+            except PDFSecurityError:
+                raise
+            except Exception:
+                continue
+        out = tempfile.SpooledTemporaryFile(max_size=OUTPUT_BUFFER_LIMIT, mode='w+b')
+        pdf.save(out)
+        out.seek(0)
+        return out, total, fonts_fixed
+    finally:
+        pdf.close()
 
 HTML = r"""<!DOCTYPE html>
 <html lang="tr">
@@ -794,7 +947,7 @@ body::after {
   <header class="topbar">
     <div class="logo">
       <span class="logo-serif">PDF Onarıcı</span>
-      <span class="logo-tag">v2.1</span>
+      <span class="logo-tag">v2.2.0</span>
     </div>
     <div class="topbar-right">
       <span class="status-dot">Hazır</span>
@@ -845,7 +998,7 @@ body::after {
     </div>
 
     <div style="margin-top:auto">
-      <button class="btn-primary" id="btnFix" disabled onclick="startFix()">
+      <button class="btn-primary" id="btnFix" disabled>
         Analiz Et &amp; Onar
       </button>
     </div>
@@ -947,7 +1100,7 @@ body::after {
 
 <div class="toast" id="toast"></div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 let selectedFile = null;
 let startTime = null;
 
@@ -981,6 +1134,7 @@ dropZone.addEventListener('drop', e => {
 });
 fileInput.addEventListener('change', () => { if (fileInput.files[0]) setFile(fileInput.files[0]); });
 btnClear.addEventListener('click', clearFile);
+btnFix.addEventListener('click', startFix);
 
 function setFile(f) {
   if (!f.name.toLowerCase().endsWith('.pdf')) { showToast('Lütfen bir .pdf dosyası seçin'); return; }
@@ -1016,10 +1170,18 @@ function now() {
   return d.toTimeString().slice(0,8);
 }
 
+function appendText(node, className, text) {
+  const child = document.createElement('span');
+  child.className = className;
+  child.textContent = text;
+  node.appendChild(child);
+}
+
 function log(type, msg) {
   const line = document.createElement('div');
   line.className = 'log-line';
-  line.innerHTML = `<span class="log-time">${now()}</span><span class="log-${type}">${msg}</span>`;
+  appendText(line, 'log-time', now());
+  appendText(line, `log-${type}`, msg);
   logBody.appendChild(line);
   logBody.scrollTop = logBody.scrollHeight;
 }
@@ -1036,7 +1198,7 @@ function resetResults() {
   spinLine.style.display = 'none';
   statBar.style.display = 'none';
   resultsGrid.style.display = 'none';
-  resultsGrid.innerHTML = '';
+  resultsGrid.replaceChildren();
   dlSection.style.display = 'none';
 }
 
@@ -1049,6 +1211,75 @@ function showToast(msg) {
   t.textContent = msg;
   t.style.display = 'block';
   setTimeout(() => { t.style.display = 'none'; }, 3000);
+}
+
+function renderNoIssues() {
+  const wrap = document.createElement('div');
+  wrap.className = 'no-issues';
+
+  const icon = document.createElement('span');
+  icon.className = 'no-issues-icon';
+  icon.textContent = '✓';
+
+  wrap.appendChild(icon);
+  wrap.appendChild(document.createTextNode('Türkçe karakter hatası bulunamadı'));
+  resultsGrid.appendChild(wrap);
+}
+
+function activateChar(char) {
+  charGrid.querySelectorAll('.char-cell').forEach(cell => {
+    if (cell.dataset.char === char) cell.classList.add('active');
+  });
+}
+
+function createResultRow(fix, index) {
+  const row = document.createElement('div');
+  row.className = 'result-row';
+  row.style.animationDelay = (index * 60) + 'ms';
+
+  const charWrap = document.createElement('div');
+  charWrap.className = 'result-char-wrap';
+
+  const before = document.createElement('span');
+  before.className = 'result-char-before';
+  before.textContent = '?';
+
+  const after = document.createElement('span');
+  after.className = 'result-char-after';
+  after.textContent = fix.char;
+
+  const info = document.createElement('div');
+  info.className = 'result-info';
+
+  const mapping = document.createElement('div');
+  mapping.className = 'result-mapping';
+  mapping.textContent = fix.mapping;
+
+  const desc = document.createElement('div');
+  desc.className = 'result-desc';
+  desc.textContent = fix.desc;
+
+  const count = document.createElement('div');
+  count.className = 'result-count';
+  count.textContent = `${fix.count} font`;
+
+  charWrap.appendChild(before);
+  charWrap.appendChild(after);
+  info.appendChild(mapping);
+  info.appendChild(desc);
+  row.appendChild(charWrap);
+  row.appendChild(info);
+  row.appendChild(count);
+  return row;
+}
+
+async function readJsonError(response, fallback) {
+  try {
+    const payload = await response.json();
+    return payload.error || fallback;
+  } catch (_) {
+    return fallback;
+  }
 }
 
 async function startFix() {
@@ -1086,7 +1317,7 @@ async function startFix() {
   if (!d.fixes || !d.fixes.length) {
     spinLine.style.display = 'none';
     resultsGrid.style.display = 'flex';
-    resultsGrid.innerHTML = '<div class="no-issues"><span class="no-issues-icon">✓</span>Türkçe karakter hatası bulunamadı</div>';
+    renderNoIssues();
     log('ok', 'Bu PDF temiz görünüyor.');
     btnFix.disabled = false;
     return;
@@ -1094,28 +1325,13 @@ async function startFix() {
 
   // Highlight chars
   d.fixes.forEach(f => {
-    const cell = charGrid.querySelector(`[data-char="${f.char}"]`);
-    if (cell) cell.classList.add('active');
+    activateChar(f.char);
   });
 
   // Show fix rows
   resultsGrid.style.display = 'flex';
   d.fixes.forEach((f, i) => {
-    const row = document.createElement('div');
-    row.className = 'result-row';
-    row.style.animationDelay = (i * 60) + 'ms';
-    row.innerHTML = `
-      <div class="result-char-wrap">
-        <span class="result-char-before">?</span>
-        <span class="result-char-after">${f.char}</span>
-      </div>
-      <div class="result-info">
-        <div class="result-mapping">${f.mapping}</div>
-        <div class="result-desc">${f.desc}</div>
-      </div>
-      <div class="result-count">${f.count} font</div>
-    `;
-    resultsGrid.appendChild(row);
+    resultsGrid.appendChild(createResultRow(f, i));
     log('warn', `${f.mapping} — ${f.count} font etkilenmiş`);
   });
 
@@ -1128,7 +1344,14 @@ async function startFix() {
   try { r2 = await fetch('/fix', { method:'POST', body:f2 }); }
   catch(e) { spinLine.style.display='none'; log('err','Onarım hatası: '+e.message); btnFix.disabled=false; return; }
 
-  if (!r2.ok) { spinLine.style.display='none'; log('err','Onarım başarısız.'); btnFix.disabled=false; return; }
+  if (!r2.ok) {
+    const message = await readJsonError(r2, 'Onarım başarısız.');
+    spinLine.style.display='none';
+    log('err', message);
+    showToast(message);
+    btnFix.disabled=false;
+    return;
+  }
 
   const patchCount = r2.headers.get('X-Patch-Count') || '—';
   document.getElementById('statPatches').textContent = patchCount;
@@ -1153,29 +1376,41 @@ async function startFix() {
 </body>
 </html>"""
 
+
+@app.errorhandler(RequestEntityTooLarge)
+def handle_request_too_large(exc):
+    return handle_api_exception(exc)
+
+
+@app.errorhandler(BadRequest)
+def handle_bad_request(exc):
+    return handle_api_exception(exc)
+
 @app.route('/')
-def index(): return render_template_string(HTML)
+def index(): return render_template_string(HTML, csp_nonce=getattr(g, 'csp_nonce', ''))
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    if 'pdf' not in request.files: return jsonify({'error':'PDF bulunamadı'}), 400
     try:
-        fixes, font_count, page_count = analyze_pdf(request.files['pdf'].read())
+        upload = validate_pdf_upload(request.files.get('pdf'))
+        fixes, font_count, page_count = analyze_pdf(upload.stream)
         return jsonify({'fixes': fixes, 'font_count': font_count, 'page_count': page_count})
-    except Exception as e: return jsonify({'error': str(e)}), 500
+    except Exception as exc:
+        return handle_api_exception(exc)
 
 @app.route('/fix', methods=['POST'])
 def fix():
-    if 'pdf' not in request.files: return jsonify({'error':'PDF bulunamadı'}), 400
-    f = request.files['pdf']
     try:
-        out, patch_count, fonts_fixed = fix_pdf_bytes(f.read())
+        upload = validate_pdf_upload(request.files.get('pdf'))
+        out, patch_count, _ = fix_pdf_stream(upload.stream)
         resp = send_file(out, mimetype='application/pdf', as_attachment=True,
-                         download_name=Path(f.filename).stem+'_onarildi.pdf')
+                         download_name=safe_download_name(upload.filename))
         resp.headers['X-Patch-Count'] = str(patch_count)
         return resp
-    except Exception as e: return jsonify({'error': str(e)}), 500
+    except Exception as exc:
+        return handle_api_exception(exc)
 
 if __name__ == '__main__':
-    print("→ http://localhost:5000")
-    app.run(debug=False, host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    print(f"→ http://127.0.0.1:{port}")
+    app.run(debug=False, host='127.0.0.1', port=port)
