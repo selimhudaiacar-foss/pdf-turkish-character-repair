@@ -204,6 +204,14 @@ Web arayuzu iki endpoint kullanir:
 
 Bu endpoint'ler esasen tarayici arayuzu icin tasarlanmistir; resmi public API sozu vermez.
 
+## Deploy notu
+
+Render benzeri production ortamlarda Flask development server yerine asagidaki baslatma komutu tercih edilmelidir:
+
+```bash
+gunicorn app:app
+```
+
 ## Guvenlik notlari
 
 Guncel surumlerde su sertlestirmeler bulunur:

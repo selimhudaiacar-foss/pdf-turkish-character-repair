@@ -34,7 +34,7 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 app.config['MAX_FORM_MEMORY_SIZE'] = 1024 * 1024
 
-VERSION = 'v2.4.0'
+VERSION = 'v2.4.1'
 SUPPORTED_LANGUAGES = ('tr', 'en')
 PDF_HEADER_SCAN_BYTES = 1024
 MAX_CMAP_BYTES = 2 * 1024 * 1024
@@ -1412,7 +1412,7 @@ body::after {
   <header class="topbar">
     <div class="logo">
       <span class="logo-serif">{{ t.app_name }}</span>
-      <span class="logo-tag">v{{ version }}</span>
+      <span class="logo-tag">{{ version }}</span>
     </div>
     <div class="topbar-right">
       <div class="lang-switch">

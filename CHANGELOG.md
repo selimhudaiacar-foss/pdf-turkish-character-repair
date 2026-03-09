@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.4.1 - 2026-03-10
+
+Bu patch sürüm Render dağıtım hatasını düzeltir. Production başlangıç komutlarında sık kullanılan `gunicorn` artık proje bağımlılıkları arasında yer alır.
+
+### Düzeltmeler
+
+- `requirements.txt` dosyasına `gunicorn` eklendi.
+- Render ve benzeri platformlarda `gunicorn app:app` başlangıç komutunun `127 command not found` ile düşmesi engellendi.
+
+### Doğrulama
+
+- `python3 -m py_compile app.py pdf_tr_fix.py`
+- Temiz sanal ortamda `pip install -r requirements.txt`
+- `gunicorn app:app` açılış testi
+
 ## v2.4.0 - 2026-03-10
 
 Bu sürüm web arayüzünün erişilebilirliği ve cihaz uyumluluğuna odaklanır. Arayüz artık telefon, tablet ve masaüstünde daha tutarlı davranır; ayrıca VS Code benzeri kalıcı bir yüksek kontrast modu sunar.
