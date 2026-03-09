@@ -24,10 +24,12 @@ Recommended setup:
 """
 
 import os
-import sys, re, argparse
+import sys, argparse
 from collections import defaultdict
 from pathlib import Path
 import pikepdf
+
+from cmap_engine import collect_font_cmap_streams, find_fixes, parse_mappings, patch_cmap
 
 SUPPORTED_LANGUAGES = ('tr', 'en')
 MAX_CMAP_BYTES = 2 * 1024 * 1024
@@ -149,71 +151,6 @@ def consume_mapping_budget(total_entries, span, lang):
     return total_entries
 
 
-def parse_mappings(cmap_text, lang):
-    mappings = {}
-    total_entries = 0
-    for block in re.findall(r'beginbfrange(.*?)endbfrange', cmap_text, re.DOTALL):
-        for m in re.finditer(r'<([0-9A-Fa-f]+)><([0-9A-Fa-f]+)><([0-9A-Fa-f]+)>', block):
-            s, e, b = int(m.group(1),16), int(m.group(2),16), int(m.group(3),16)
-            total_entries = consume_mapping_budget(total_entries, e - s + 1, lang)
-            for i, c in enumerate(range(s, e+1)):
-                mappings[c] = b + i
-    for block in re.findall(r'beginbfchar(.*?)endbfchar', cmap_text, re.DOTALL):
-        for m in re.finditer(r'<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>', block):
-            total_entries = consume_mapping_budget(total_entries, 1, lang)
-            mappings[int(m.group(1),16)] = int(m.group(2),16)
-    return mappings
-
-
-def find_fixes(mappings):
-    rev = defaultdict(list)
-    for cid, uni in mappings.items():
-        rev[uni].append(cid)
-    fixes = {}
-
-    # Kural 1: Kontrol karakteri → ğ/Ğ (kesin hata)
-    for cid, uni in mappings.items():
-        if uni == 0x001F: fixes[cid] = (uni, 0x011F)
-        elif uni == 0x001E: fixes[cid] = (uni, 0x011E)
-
-    # Kural 2: Birden fazla '1' CID'i → ı veya İ
-    if len(rev[0x0031]) > 1:
-        has_digit_one = any(
-            any(mappings.get(c+d) in range(0x32, 0x3A) for d in range(-5,6) if d!=0)
-            for c in rev[0x0031]
-        )
-        for cid in rev[0x0031]:
-            near_i     = mappings.get(cid-1)==0x0069 or mappings.get(cid+1)==0x0069
-            near_digit = any(mappings.get(cid+d) in range(0x32,0x3A) for d in range(-5,6) if d!=0)
-            if near_i:
-                fixes[cid] = (0x0031, 0x0131)        # ı
-            elif not near_digit and has_digit_one:
-                fixes[cid] = (0x0031, 0x0130)        # İ
-
-    # Kural 3: '_' → ş/Ş (s veya S yakınında)
-    for cid in rev[0x005F]:
-        nearby = [mappings.get(cid+d) for d in range(-6,7) if d!=0 and mappings.get(cid+d)]
-        if 0x0053 in nearby:   fixes[cid] = (0x005F, 0x015E)  # Ş
-        elif 0x0073 in nearby: fixes[cid] = (0x005F, 0x015F)  # ş
-
-    return fixes
-
-
-def patch_cmap(cmap_text, fixes):
-    count = 0
-    for cid, (wrong, correct) in fixes.items():
-        pat = re.compile(
-            r'<(' + f'{cid:04x}' + r')><(' + f'{cid:04x}' + r')><(' + f'{wrong:04x}' + r')>',
-            re.IGNORECASE
-        )
-        cmap_text, n = pat.subn(
-            lambda m, c=f'{correct:04X}': f'<{m.group(1)}><{m.group(2)}><{c}>',
-            cmap_text
-        )
-        count += n
-    return cmap_text, count
-
-
 def get_cli_labels(lang):
     return {
         ('[ctrl-1F]', 'ğ'): translate(lang, 'label_ctrl_1f'),
@@ -233,40 +170,37 @@ def fix_pdf(input_path, output_path=None, analyze_only=False, lang='tr'):
     print(translate(lang, 'opening', path=input_path))
     pdf = open_pdf(input_path)
 
-    seen = set()
     total_patches = 0
     fonts_patched = 0
     summary = defaultdict(int)
 
     try:
-        for page in pdf.pages:
+        for cmap_stream in collect_font_cmap_streams(pdf):
             try:
-                fd = page.get('/Resources', {}).get('/Font', {})
-                for fname, fref in fd.items():
-                    fobj = fref
-                    try: objnum = fobj.objgen[0]
-                    except Exception: continue
-                    if objnum in seen or '/ToUnicode' not in fobj: continue
-                    seen.add(objnum)
+                cmap_text = read_cmap_text(cmap_stream, lang)
+                mappings = parse_mappings(
+                    cmap_text,
+                    lambda total_entries, span: consume_mapping_budget(total_entries, span, lang),
+                )
+                fixes = find_fixes(mappings)
+                if not fixes:
+                    continue
 
-                    cmap_text  = read_cmap_text(fobj['/ToUnicode'], lang)
-                    mappings   = parse_mappings(cmap_text, lang)
-                    fixes      = find_fixes(mappings)
-                    if not fixes: continue
+                for cid, (wrong, correct) in fixes.items():
+                    try:
+                        wc = chr(wrong) if wrong >= 0x20 else f'[ctrl-{wrong:02X}]'
+                        summary[(wc, chr(correct))] += 1
+                    except Exception:
+                        continue
 
-                    for cid, (wrong, correct) in fixes.items():
-                        try:
-                            wc = chr(wrong) if wrong >= 0x20 else f'[ctrl-{wrong:02X}]'
-                            summary[(wc, chr(correct))] += 1
-                        except Exception:
-                            continue
+                if analyze_only:
+                    continue
 
-                    if not analyze_only:
-                        new_cmap, count = patch_cmap(cmap_text, fixes)
-                        if count > 0:
-                            fobj['/ToUnicode'] = pdf.make_stream(new_cmap.encode('latin-1'))
-                            fonts_patched += 1
-                            total_patches += count
+                new_cmap, count = patch_cmap(cmap_text, fixes)
+                if count > 0:
+                    cmap_stream.write(new_cmap.encode('latin-1'))
+                    fonts_patched += 1
+                    total_patches += count
             except PDFSecurityError:
                 raise
             except Exception:

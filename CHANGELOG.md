@@ -1,5 +1,48 @@
 # Changelog
 
+## v3.0 - 2026-03-10
+
+Bu sürüm CMap onarım motorunu daha dayanıklı hale getirir ve web akışındaki çift upload maliyetini kaldırır. Boşluklu ve array tabanlı CMap tanımları daha doğru işlenir; paylaşılan `ToUnicode` akışları yerinde güncellenir; web arayüzü PDF'i tek istekte analiz edip onarır.
+
+### Eklenenler
+
+- Ortak CMap işleme mantığını taşıyan yeni `cmap_engine.py` modülü eklendi.
+- Web tarafına tek-upload iş akışı için `POST /process` endpoint'i eklendi.
+- Geçici onarılmış dosyaların indirilmesi için `GET /download/<token>` endpoint'i eklendi.
+- Geçici çıktı dosyaları için süreye bağlı temizleme akışı ve token tabanlı dosya saklama mekanizması eklendi.
+- CMap motoru için whitespace, array-format, bozuk blok ve patch davranışlarını kapsayan yeni testler eklendi.
+
+### Güvenlik Düzeltmeleri
+
+- `beginbfrange ... endbfrange` ve `beginbfchar ... endbfchar` blokları artık regex ile tüm metin üzerinde geri izleme yapan desenlerle değil, deterministik blok taraması ile ayrıştırılıyor.
+- Bozuk veya kapanmayan CMap bloklarında gereksiz CPU tüketimine yol açabilecek regex tarama davranışı sınırlandırıldı.
+- İndirme tokeni doğrulaması ve güvenlileştirilmiş dosya adı akışı ile geçici dosya erişimi daha sıkı hale getirildi.
+- Paylaşımlı `ToUnicode` stream referansları koparılmadan doğrudan stream üzerine yazılarak aynı nesneyi kullanan fontlarda tutarsızlık riski kaldırıldı.
+
+### İyileştirmeler
+
+- `beginbfrange` parse mantığı artık etiketler arası boşlukları ve satır sonlarını tolere ediyor.
+- `beginbfrange` içindeki array formatı (`[ <...> <...> ]`) desteklenir hale getirildi.
+- Patch motoru artık yalnızca dar bir regex kalıbına değil, hem `bfchar` hem `bfrange` bloklarına uygulanıyor.
+- Tek bir CID düzeltmesi geniş bir range içinde yer alıyorsa ilgili kayıt array biçimine çevrilerek kısmi patch yapılabiliyor.
+- Web arayüzü artık aynı PDF'i önce analiz sonra onarım için ikinci kez upload etmiyor.
+- Sonuç ekranı tek işlemde gelen analiz ve onarım verisi ile dolduruluyor; indirme bağlantısı geçici sunucu artefact'ına bağlanıyor.
+- Font keşfi inherited resources, form XObject kaynakları ve obje taraması üzerinden daha geniş kapsamlı hale getirildi.
+- CLI ve web giriş noktaları aynı CMap motorunu kullanacak şekilde sadeleştirildi.
+
+### Uyumluluk
+
+- Mevcut istemciler bozulmasın diye `POST /analyze` ve `POST /fix` endpoint'leri korunmaya devam ediyor.
+
+### Dokümantasyon
+
+- `README.md` web API özeti tek-upload `POST /process` akışını ve geçici indirme endpoint'ini açıklayacak şekilde güncellendi.
+
+### Doğrulama
+
+- `python3 -m unittest discover -s tests`
+- `python3 -m py_compile app.py cmap_engine.py pdf_tr_fix.py tests/test_cmap_engine.py`
+
 ## v2.4.1 - 2026-03-10
 
 Bu patch sürüm Render dağıtım hatasını düzeltir. Production başlangıç komutlarında sık kullanılan `gunicorn` artık proje bağımlılıkları arasında yer alır.

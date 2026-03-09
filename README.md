@@ -195,12 +195,19 @@ Kaydedildi: belge_onarildi.pdf
 
 ## Web API ozeti
 
-Web arayuzu iki endpoint kullanir:
+Tarayici arayuzu varsayilan olarak tek-upload akisi kullanir:
+
+- `POST /process`
+  PDF'i tek istekte analiz eder, gerekiyorsa onarir ve gecici indirme adresi dondurur.
+- `GET /download/<token>`
+  `POST /process` tarafindan uretilen gecici onarilmis PDF'i indirir.
+
+Uyumluluk icin su endpoint'ler korunur:
 
 - `POST /analyze`
-  PDF'i analiz eder, bulunan hata turlerini JSON olarak dondurur.
+  PDF'i sadece analiz eder, bulunan hata turlerini JSON olarak dondurur.
 - `POST /fix`
-  PDF'i onarir ve duzeltilmis PDF'i indirilebilir yanit olarak dondurur.
+  PDF'i dogrudan onarir ve duzeltilmis PDF'i indirilebilir yanit olarak dondurur.
 
 Bu endpoint'ler esasen tarayici arayuzu icin tasarlanmistir; resmi public API sozu vermez.
 

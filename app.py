@@ -19,28 +19,34 @@ Usage:
 See pdf_tr_fix.py for the CLI version.
 """
 import os
-import re
 import secrets
 import tempfile
+import time
 from collections import defaultdict
 from pathlib import Path
+from urllib.parse import quote
 
 import pikepdf
 from flask import Flask, g, jsonify, render_template_string, request, send_file
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
+from cmap_engine import collect_font_cmap_streams, find_fixes, parse_mappings, patch_cmap
+
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 app.config['MAX_FORM_MEMORY_SIZE'] = 1024 * 1024
 
-VERSION = 'v2.4.1'
+VERSION = 'v3.0'
 SUPPORTED_LANGUAGES = ('tr', 'en')
 PDF_HEADER_SCAN_BYTES = 1024
 MAX_CMAP_BYTES = 2 * 1024 * 1024
 MAX_BFRANGE_SPAN = 65536
 MAX_CMAP_ENTRIES = 131072
 OUTPUT_BUFFER_LIMIT = 2 * 1024 * 1024
+PROCESSED_FILE_TTL_SECONDS = 15 * 60
+PROCESSED_FILE_DIR = Path(tempfile.gettempdir()) / 'pdf-fix-processed'
+PROCESSED_FILE_DIR.mkdir(parents=True, exist_ok=True)
 
 TEXTS = {
     'tr': {
@@ -277,8 +283,46 @@ def consume_mapping_budget(total_entries, span, lang):
 
 
 def safe_download_name(filename, lang):
-    stem = Path(secure_filename(filename or 'document.pdf')).stem or 'document'
+    stem = Path(sanitize_download_name(filename)).stem or 'document'
     return f"{stem}{translate('output_suffix', lang)}.pdf"
+
+
+def sanitize_download_name(filename, fallback='document.pdf'):
+    sanitized = secure_filename(filename or fallback) or fallback
+    if not sanitized.lower().endswith('.pdf'):
+        stem = Path(sanitized).stem or 'document'
+        sanitized = f'{stem}.pdf'
+    return sanitized
+
+
+def processed_file_path(token):
+    return PROCESSED_FILE_DIR / f'{token}.pdf'
+
+
+def cleanup_processed_files(now=None):
+    cutoff = (now or time.time()) - PROCESSED_FILE_TTL_SECONDS
+    for path in PROCESSED_FILE_DIR.glob('*.pdf'):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            app.logger.warning('Failed to remove expired processed PDF: %s', path)
+
+
+def create_processed_artifact(pdf, filename, lang):
+    cleanup_processed_files()
+    token = secrets.token_hex(16)
+    output_path = processed_file_path(token)
+    download_name = safe_download_name(filename, lang)
+    pdf.save(output_path)
+    return {
+        'download_name': download_name,
+        'download_token': token,
+        'download_url': f"/download/{token}?name={quote(download_name)}",
+        'output_size': output_path.stat().st_size,
+    }
 
 
 def json_error(message, status):
@@ -343,96 +387,61 @@ def add_security_headers(response):
         response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
     return response
 
-def parse_mappings(cmap_text, lang):
-    mappings = {}
-    total_entries = 0
-    for block in re.findall(r'beginbfrange(.*?)endbfrange', cmap_text, re.DOTALL):
-        for m in re.finditer(r'<([0-9A-Fa-f]+)><([0-9A-Fa-f]+)><([0-9A-Fa-f]+)>', block):
-            s,e,b = int(m.group(1),16),int(m.group(2),16),int(m.group(3),16)
-            total_entries = consume_mapping_budget(total_entries, e - s + 1, lang)
-            for i,c in enumerate(range(s,e+1)): mappings[c]=b+i
-    for block in re.findall(r'beginbfchar(.*?)endbfchar', cmap_text, re.DOTALL):
-        for m in re.finditer(r'<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>', block):
-            total_entries = consume_mapping_budget(total_entries, 1, lang)
-            mappings[int(m.group(1),16)]=int(m.group(2),16)
-    return mappings
 
-def find_fixes(mappings):
-    rev = defaultdict(list)
-    for cid,uni in mappings.items(): rev[uni].append(cid)
-    fixes = {}
-    for cid,uni in mappings.items():
-        if uni==0x001F: fixes[cid]=(uni,0x011F)
-        elif uni==0x001E: fixes[cid]=(uni,0x011E)
-    if len(rev[0x0031])>1:
-        has_digit_one=any(any(mappings.get(c+d) in range(0x32,0x3A) for d in range(-5,6) if d!=0) for c in rev[0x0031])
-        for cid in rev[0x0031]:
-            near_i=mappings.get(cid-1)==0x0069 or mappings.get(cid+1)==0x0069
-            near_digit=any(mappings.get(cid+d) in range(0x32,0x3A) for d in range(-5,6) if d!=0)
-            if near_i: fixes[cid]=(0x0031,0x0131)
-            elif not near_digit and has_digit_one: fixes[cid]=(0x0031,0x0130)
-    for cid in rev[0x005F]:
-        nearby=[mappings.get(cid+d) for d in range(-6,7) if d!=0 and mappings.get(cid+d)]
-        if 0x0053 in nearby: fixes[cid]=(0x005F,0x015E)
-        elif 0x0073 in nearby: fixes[cid]=(0x005F,0x015F)
-    return fixes
+def build_fix_results(summary, lang):
+    labels = get_fix_labels(lang)
+    results = []
+    for (wrong, correct), count in sorted(summary.items(), key=lambda item: -item[1]):
+        char, mapping, desc = labels.get((wrong, correct), (f'?', f'U+{wrong:04X}→U+{correct:04X}', ''))
+        results.append({'char': char, 'mapping': mapping, 'desc': desc, 'count': count})
+    return results
 
-def patch_cmap(cmap_text,fixes):
-    count=0
-    for cid,(wrong,correct) in fixes.items():
-        pat=re.compile(r'<('+f'{cid:04x}'+r')><('+f'{cid:04x}'+r')><('+f'{wrong:04x}'+r')>',re.IGNORECASE)
-        cmap_text,n=pat.subn(lambda m,c=f'{correct:04X}':f'<{m.group(1)}><{m.group(2)}><{c}>',cmap_text)
-        count+=n
-    return cmap_text,count
 
 def analyze_pdf(pdf_source, lang):
     pdf = open_pdf(pdf_source)
-    seen=set(); summary=defaultdict(int); page_count=len(pdf.pages)
-    labels = get_fix_labels(lang)
     try:
-        for page in pdf.pages:
+        cmap_streams = collect_font_cmap_streams(pdf)
+        summary = defaultdict(int)
+        page_count = len(pdf.pages)
+        for cmap_stream in cmap_streams:
             try:
-                fd=page.get('/Resources',{}).get('/Font',{})
-                for _,fref in fd.items():
-                    fobj=fref
-                    try: objnum=fobj.objgen[0]
-                    except Exception: continue
-                    if objnum in seen or '/ToUnicode' not in fobj: continue
-                    seen.add(objnum)
-                    cmap=read_cmap_text(fobj['/ToUnicode'], lang)
-                    for _,(wrong,correct) in find_fixes(parse_mappings(cmap, lang)).items():
-                        summary[(wrong,correct)]+=1
+                cmap = read_cmap_text(cmap_stream, lang)
+                mappings = parse_mappings(
+                    cmap,
+                    lambda total_entries, span: consume_mapping_budget(total_entries, span, lang),
+                )
+                for _,(wrong,correct) in find_fixes(mappings).items():
+                    summary[(wrong,correct)] += 1
             except PDFSecurityError:
                 raise
             except Exception:
                 continue
-        results=[]
-        for (wrong,correct),cnt in sorted(summary.items(),key=lambda x:-x[1]):
-            char,mapping,desc=labels.get((wrong,correct),(f'?',f'U+{wrong:04X}→U+{correct:04X}',''))
-            results.append({'char':char,'mapping':mapping,'desc':desc,'count':cnt})
-        return results, len(seen), page_count
+        return build_fix_results(summary, lang), len(cmap_streams), page_count
     finally:
         pdf.close()
 
+
 def fix_pdf_stream(pdf_source, lang):
-    pdf = open_pdf(pdf_source); seen=set(); total=0; fonts_fixed=0
+    pdf = open_pdf(pdf_source)
     try:
-        for page in pdf.pages:
+        total = 0
+        fonts_fixed = 0
+        for cmap_stream in collect_font_cmap_streams(pdf):
             try:
-                fd=page.get('/Resources',{}).get('/Font',{})
-                for _,fref in fd.items():
-                    fobj=fref
-                    try: objnum=fobj.objgen[0]
-                    except Exception: continue
-                    if objnum in seen or '/ToUnicode' not in fobj: continue
-                    seen.add(objnum)
-                    cmap_text=read_cmap_text(fobj['/ToUnicode'], lang)
-                    fixes=find_fixes(parse_mappings(cmap_text, lang))
-                    if not fixes: continue
-                    new_cmap,count=patch_cmap(cmap_text,fixes)
-                    if count>0:
-                        fobj['/ToUnicode']=pdf.make_stream(new_cmap.encode('latin-1'))
-                        total+=count; fonts_fixed+=1
+                cmap_text = read_cmap_text(cmap_stream, lang)
+                fixes = find_fixes(
+                    parse_mappings(
+                        cmap_text,
+                        lambda total_entries, span: consume_mapping_budget(total_entries, span, lang),
+                    )
+                )
+                if not fixes:
+                    continue
+                new_cmap, count = patch_cmap(cmap_text, fixes)
+                if count > 0:
+                    cmap_stream.write(new_cmap.encode('latin-1'))
+                    total += count
+                    fonts_fixed += 1
             except PDFSecurityError:
                 raise
             except Exception:
@@ -441,6 +450,53 @@ def fix_pdf_stream(pdf_source, lang):
         pdf.save(out)
         out.seek(0)
         return out, total, fonts_fixed
+    finally:
+        pdf.close()
+
+
+def process_pdf_stream(pdf_source, filename, lang):
+    pdf = open_pdf(pdf_source)
+    try:
+        cmap_streams = collect_font_cmap_streams(pdf)
+        summary = defaultdict(int)
+        page_count = len(pdf.pages)
+        patch_count = 0
+        fonts_fixed = 0
+
+        for cmap_stream in cmap_streams:
+            try:
+                cmap_text = read_cmap_text(cmap_stream, lang)
+                mappings = parse_mappings(
+                    cmap_text,
+                    lambda total_entries, span: consume_mapping_budget(total_entries, span, lang),
+                )
+                fixes = find_fixes(mappings)
+                if not fixes:
+                    continue
+
+                for _, (wrong, correct) in fixes.items():
+                    summary[(wrong, correct)] += 1
+
+                new_cmap, count = patch_cmap(cmap_text, fixes)
+                if count > 0:
+                    cmap_stream.write(new_cmap.encode('latin-1'))
+                    patch_count += count
+                    fonts_fixed += 1
+            except PDFSecurityError:
+                raise
+            except Exception:
+                continue
+
+        response = {
+            'fixes': build_fix_results(summary, lang),
+            'font_count': len(cmap_streams),
+            'page_count': page_count,
+            'patch_count': patch_count,
+            'fonts_fixed': fonts_fixed,
+        }
+        if patch_count > 0:
+            response.update(create_processed_artifact(pdf, filename, lang))
+        return response
     finally:
         pdf.close()
 
@@ -1803,15 +1859,6 @@ function createResultRow(fix, index) {
   return row;
 }
 
-async function readJsonError(response, fallback) {
-  try {
-    const payload = await response.json();
-    return payload.error || fallback;
-  } catch (_) {
-    return fallback;
-  }
-}
-
 async function startFix() {
   if (!selectedFile) return;
   btnFix.disabled = true;
@@ -1822,13 +1869,17 @@ async function startFix() {
   // Step 2: Analyze
   setStep(1);
   spinLine.style.display = 'flex';
-  spinText.textContent = t('scanning_cmaps');
+  spinText.textContent = t('processing');
   log('info', t('analysis_started'));
+  log('info', t('patching_fonts'));
 
-  const f1 = new FormData(); f1.append('pdf', selectedFile); f1.append('lang', currentLang);
+  const form = new FormData();
+  form.append('pdf', selectedFile);
+  form.append('lang', currentLang);
+
   let d;
   try {
-    const r = await fetch('/analyze', { method:'POST', body:f1, headers: { 'X-App-Lang': currentLang } });
+    const r = await fetch('/process', { method:'POST', body:form, headers: { 'X-App-Lang': currentLang } });
     d = await r.json();
   } catch(e) { spinLine.style.display='none'; log('err', t('server_error', { message: e.message })); btnFix.disabled=false; return; }
 
@@ -1838,7 +1889,7 @@ async function startFix() {
   document.getElementById('statPages').textContent  = d.page_count ?? '—';
   document.getElementById('statFonts').textContent  = d.font_count ?? '—';
   document.getElementById('statTypes').textContent  = d.fixes ? d.fixes.length : 0;
-  document.getElementById('statPatches').textContent = '…';
+  document.getElementById('statPatches').textContent = d.patch_count ?? 0;
   statBar.style.display = 'grid';
 
   setStep(2);
@@ -1865,17 +1916,8 @@ async function startFix() {
     log('warn', t('affected_fonts', { mapping: f.mapping, count: f.count, font_word: fontWord(f.count) }));
   });
 
-  // Step 3: Fix
-  spinText.textContent = t('patching_fonts');
-  setStep(2);
-
-  const f2 = new FormData(); f2.append('pdf', selectedFile); f2.append('lang', currentLang);
-  let r2;
-  try { r2 = await fetch('/fix', { method:'POST', body:f2, headers: { 'X-App-Lang': currentLang } }); }
-  catch(e) { spinLine.style.display='none'; log('err', t('repair_error', { message: e.message })); btnFix.disabled=false; return; }
-
-  if (!r2.ok) {
-    const message = await readJsonError(r2, t('repair_failed'));
+  if (!d.download_url) {
+    const message = t('repair_failed');
     spinLine.style.display='none';
     log('err', message);
     showToast(message);
@@ -1883,23 +1925,19 @@ async function startFix() {
     return;
   }
 
-  const patchCount = r2.headers.get('X-Patch-Count') || '—';
-  document.getElementById('statPatches').textContent = patchCount;
-
-  const blob    = await r2.blob();
-  const url     = URL.createObjectURL(blob);
-  const outName = makeOutputName(selectedFile.name);
+  const outName = d.download_name || makeOutputName(selectedFile.name);
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
-  dlBtn.href = url; dlBtn.download = outName;
+  dlBtn.href = d.download_url;
+  dlBtn.download = outName;
   dlBtnText.textContent = outName;
-  dlNote.textContent = t('download_note', { elapsed, size: fmtSize(blob.size) });
+  dlNote.textContent = t('download_note', { elapsed, size: fmtSize(d.output_size || selectedFile.size) });
   dlSection.style.display = 'flex';
 
   spinLine.style.display = 'none';
   setStep(3);
   log('ok', t('repair_completed', { elapsed }));
-  log('ok', t('output_ready', { name: outName, size: fmtSize(blob.size) }));
+  log('ok', t('output_ready', { name: outName, size: fmtSize(d.output_size || selectedFile.size) }));
   btnFix.disabled = false;
 }
 </script>
@@ -1930,6 +1968,38 @@ def index():
         lang_options=LANGUAGE_OPTIONS,
         max_upload_mb=max_upload_limit_mb(),
         drop_hint=translate('drop_hint', lang, size=max_upload_limit_mb()),
+    )
+
+@app.route('/process', methods=['POST'])
+def process():
+    lang = get_request_language()
+    try:
+        upload = validate_pdf_upload(request.files.get('pdf'), lang)
+        result = process_pdf_stream(upload.stream, upload.filename, lang)
+        return jsonify(result)
+    except Exception as exc:
+        return handle_api_exception(exc, lang)
+
+@app.route('/download/<token>')
+def download_processed(token):
+    cleanup_processed_files()
+    if len(token) != 32:
+        return json_error(translate('bad_request', get_request_language()), 400)
+    try:
+        int(token, 16)
+    except ValueError:
+        return json_error(translate('bad_request', get_request_language()), 400)
+
+    artifact_path = processed_file_path(token)
+    if not artifact_path.is_file():
+        return json_error(translate('bad_request', get_request_language()), 404)
+
+    return send_file(
+        artifact_path,
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=sanitize_download_name(request.args.get('name')),
+        max_age=0,
     )
 
 @app.route('/analyze', methods=['POST'])
