@@ -1,5 +1,32 @@
 # Changelog
 
+## v2.4.0 - 2026-03-10
+
+Bu sürüm web arayüzünün erişilebilirliği ve cihaz uyumluluğuna odaklanır. Arayüz artık telefon, tablet ve masaüstünde daha tutarlı davranır; ayrıca VS Code benzeri kalıcı bir yüksek kontrast modu sunar.
+
+### Eklenenler
+
+- Web arayüzüne `Normal / Yuksek` kontrast anahtarı eklendi.
+- Yüksek kontrast tercihini `localStorage` ile saklayan istemci tarafı tema akışı eklendi.
+- Tarayıcı `prefers-contrast: more` sinyalini algılayıp başlangıç temasını buna göre seçen başlangıç betiği eklendi.
+- Klavye odağı için daha görünür `:focus-visible` halkaları eklendi.
+
+### İyileştirmeler
+
+- Ana layout telefon, tablet ve dar dizüstü genişlikleri için çoklu breakpoint ile yeniden düzenlendi.
+- Üst bar, adım akışı, sonuç kartları, istatistik alanı, indirme bloğu ve footer dar ekranlarda taşmayacak şekilde güncellendi.
+- Safe-area inset desteği ile çentikli mobil cihazlarda içerik boşlukları iyileştirildi.
+- Düşük kontrastlı metin ve ayrım çizgileri hem normal hem yüksek kontrast temasında daha okunur hale getirildi.
+
+### Dokümantasyon
+
+- `README.md` dosyasına responsive arayüz ve yüksek kontrast modu bilgileri eklendi.
+
+### Doğrulama
+
+- `python3 -m py_compile app.py pdf_tr_fix.py`
+- Yerel Flask açılış testi ve `GET /` için `200 OK` doğrulaması
+
 ## v2.3.0 - 2026-03-09
 
 Bu sürüm dil desteği ve dokümantasyon iyileştirmelerine odaklanır. Web arayüzü ve CLI artık Türkçe ile birlikte İngilizce de destekler; ayrıca kurulum ve geliştirme akışlarında `venv` kullanımı daha görünür hale getirilmiştir.

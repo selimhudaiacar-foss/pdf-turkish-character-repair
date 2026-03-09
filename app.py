@@ -34,7 +34,7 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 app.config['MAX_FORM_MEMORY_SIZE'] = 1024 * 1024
 
-VERSION = 'v2.3.0'
+VERSION = 'v2.4.0'
 SUPPORTED_LANGUAGES = ('tr', 'en')
 PDF_HEADER_SCAN_BYTES = 1024
 MAX_CMAP_BYTES = 2 * 1024 * 1024
@@ -49,6 +49,9 @@ TEXTS = {
         'status_ready': 'Hazır',
         'engine_name': 'CMap Patch Engine',
         'language_label': 'Dil',
+        'contrast_label': 'Kontrast',
+        'contrast_default': 'Normal',
+        'contrast_high': 'Yuksek',
         'panel_file': 'Dosya',
         'drop_title': "PDF'i bırakın veya tıklayın",
         'drop_hint': 'Maks. {size} MB · .pdf',
@@ -107,6 +110,9 @@ TEXTS = {
         'status_ready': 'Ready',
         'engine_name': 'CMap Patch Engine',
         'language_label': 'Language',
+        'contrast_label': 'Contrast',
+        'contrast_default': 'Default',
+        'contrast_high': 'High',
         'panel_file': 'File',
         'drop_title': 'Drop a PDF here or click to browse',
         'drop_hint': 'Max {size} MB · .pdf',
@@ -446,29 +452,64 @@ HTML = r"""<!DOCTYPE html>
 <title>{{ t.page_title }}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@300;400;500&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script nonce="{{ csp_nonce }}">
+(() => {
+  const key = 'pdf-repair-contrast';
+  try {
+    const stored = window.localStorage.getItem(key);
+    const prefersHigh = window.matchMedia && window.matchMedia('(prefers-contrast: more)').matches;
+    const mode = stored === 'high' || stored === 'default' ? stored : (prefersHigh ? 'high' : 'default');
+    if (mode === 'high') document.documentElement.dataset.contrast = 'high';
+  } catch (_) {}
+})();
+</script>
 <style>
 /* ── Reset & Tokens ─────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:        #07070d;
-  --ink:       #f0ede6;
-  --ink-dim:   #7a7870;
-  --ink-faint: #2e2c2a;
-  --card:      #0e0d13;
-  --card2:     #161420;
-  --line:      rgba(240,237,230,0.07);
-  --line2:     rgba(240,237,230,0.13);
-  --gold:      #d4a853;
-  --gold-dim:  rgba(212,168,83,0.15);
-  --gold-glow: rgba(212,168,83,0.06);
-  --green:     #5fbe8e;
-  --green-dim: rgba(95,190,142,0.12);
-  --red:       #e06060;
+  --bg:        #04050a;
+  --ink:       #fcf8ef;
+  --ink-dim:   #c8c1b0;
+  --ink-faint: #8f887a;
+  --card:      #11131a;
+  --card2:     #1b1e28;
+  --line:      rgba(252,248,239,0.14);
+  --line2:     rgba(252,248,239,0.24);
+  --gold:      #f1c36d;
+  --gold-dim:  rgba(241,195,109,0.22);
+  --gold-glow: rgba(241,195,109,0.12);
+  --green:     #7ce0aa;
+  --green-dim: rgba(124,224,170,0.18);
+  --red:       #ff8e8e;
+  --focus-ring:#f1c36d;
   --mono: 'Geist Mono', monospace;
   --serif: 'Instrument Serif', Georgia, serif;
   --sans: 'Geist', sans-serif;
   --r: 10px;
+  --page-gutter: clamp(1rem, 2.5vw, 2rem);
+  --panel-pad: clamp(1rem, 3vw, 2rem);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+:root[data-contrast='high'] {
+  --bg:        #000000;
+  --ink:       #ffffff;
+  --ink-dim:   #f2f2f2;
+  --ink-faint: #b9b9b9;
+  --card:      #05070d;
+  --card2:     #0f131b;
+  --line:      rgba(255,255,255,0.32);
+  --line2:     rgba(255,255,255,0.52);
+  --gold:      #ffd866;
+  --gold-dim:  rgba(255,216,102,0.24);
+  --gold-glow: rgba(255,216,102,0.18);
+  --green:     #8effc2;
+  --green-dim: rgba(142,255,194,0.22);
+  --red:       #ffb0b0;
+  --focus-ring:#ffffff;
 }
 
 html, body {
@@ -479,6 +520,8 @@ html, body {
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
 }
 
 /* ── Grid noise texture overlay ─────────────────── */
@@ -491,11 +534,15 @@ body::after {
   opacity: .6;
 }
 
+:root[data-contrast='high'] body::after {
+  opacity: .28;
+}
+
 /* ── Layout ─────────────────────────────────────── */
 .shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 340px 1fr;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
   grid-template-rows: auto 1fr auto;
 }
 
@@ -503,17 +550,21 @@ body::after {
 .topbar {
   grid-column: 1 / -1;
   border-bottom: 1px solid var(--line);
-  padding: 0 2rem;
-  height: 52px;
+  padding: .85rem calc(var(--page-gutter) + var(--safe-right)) .85rem calc(var(--page-gutter) + var(--safe-left));
+  min-height: 52px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: .75rem 1.25rem;
+  flex-wrap: wrap;
 }
 
 .logo {
   display: flex;
   align-items: baseline;
   gap: .6rem;
+  flex-wrap: wrap;
+  row-gap: .35rem;
 }
 
 .logo-serif {
@@ -539,17 +590,64 @@ body::after {
   color: var(--ink-dim);
   display: flex;
   align-items: center;
-  gap: 1.5rem;
+  gap: .75rem 1.25rem;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .lang-switch {
   display: flex;
   align-items: center;
   gap: .45rem;
+  flex-wrap: wrap;
+}
+
+.contrast-switch {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  flex-wrap: wrap;
 }
 
 .lang-label {
   color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.contrast-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+}
+
+.contrast-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--ink-dim);
+  border-radius: 999px;
+  padding: .24rem .58rem;
+  font-family: var(--mono);
+  font-size: .68rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color .15s, background .15s, box-shadow .15s;
+}
+
+.contrast-btn:hover {
+  color: var(--ink);
+  background: rgba(255,255,255,0.06);
+}
+
+.contrast-btn.active {
+  color: var(--ink);
+  background: var(--gold-dim);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
 }
 
 .lang-link {
@@ -564,14 +662,20 @@ body::after {
 .lang-link:hover,
 .lang-link.active {
   color: var(--gold);
-  border-color: rgba(212,168,83,0.35);
-  background: rgba(212,168,83,0.08);
+  border-color: rgba(241,195,109,0.55);
+  background: rgba(241,195,109,0.14);
+}
+
+:where(.lang-link, .contrast-btn, .btn-primary, .btn-clear, .dl-btn, .drop-zone):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .status-dot {
   display: inline-flex;
   align-items: center;
   gap: .4rem;
+  white-space: nowrap;
 }
 
 .status-dot::before {
@@ -591,10 +695,11 @@ body::after {
 /* ── Left panel ─────────────────────────────────── */
 .left-panel {
   border-right: 1px solid var(--line);
-  padding: 2rem;
+  padding: var(--panel-pad);
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  min-width: 0;
 }
 
 .panel-label {
@@ -611,7 +716,7 @@ body::after {
   position: relative;
   border: 1px solid var(--line2);
   border-radius: var(--r);
-  padding: 2.5rem 1.5rem;
+  padding: clamp(1.35rem, 5vw, 2.5rem) clamp(1rem, 3vw, 1.5rem);
   text-align: center;
   cursor: pointer;
   transition: border-color .2s, background .2s;
@@ -634,8 +739,8 @@ body::after {
 
 .drop-zone:hover,
 .drop-zone.over {
-  border-color: rgba(212,168,83,0.3);
-  background: rgba(212,168,83,0.02);
+  border-color: rgba(241,195,109,0.45);
+  background: rgba(241,195,109,0.08);
 }
 
 .drop-zone input[type=file] {
@@ -663,12 +768,14 @@ body::after {
   font-weight: 500;
   color: var(--ink);
   margin-bottom: .3rem;
+  overflow-wrap: anywhere;
 }
 
 .drop-hint {
   font-family: var(--mono);
   font-size: .68rem;
   color: var(--ink-dim);
+  overflow-wrap: anywhere;
 }
 
 /* File card */
@@ -682,7 +789,8 @@ body::after {
 }
 
 .file-card-top {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: flex-start;
   gap: .85rem;
 }
@@ -719,6 +827,7 @@ body::after {
   color: var(--ink-dim); padding: .2rem;
   border-radius: 5px; transition: color .15s;
   flex-shrink: 0;
+  align-self: flex-start;
 }
 .btn-clear:hover { color: var(--red); }
 
@@ -763,7 +872,7 @@ body::after {
 /* Char grid */
 .char-grid {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: .4rem;
 }
 
@@ -784,7 +893,7 @@ body::after {
 
 .char-cell.active {
   color: var(--gold);
-  border-color: rgba(212,168,83,0.3);
+  border-color: rgba(241,195,109,0.48);
   background: var(--gold-dim);
 }
 
@@ -799,11 +908,12 @@ body::after {
 
 /* ── Right panel ────────────────────────────────── */
 .right-panel {
-  padding: 2rem;
+  padding: var(--panel-pad);
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
   overflow-y: auto;
+  min-width: 0;
 }
 
 /* Steps */
@@ -823,6 +933,12 @@ body::after {
   color: var(--ink-dim);
   transition: all .2s;
   position: relative;
+  min-width: 0;
+}
+
+.step-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .step::after {
@@ -857,6 +973,7 @@ body::after {
 .step.active .step-num {
   background: var(--gold-dim);
   border-color: var(--gold);
+  color: var(--ink);
 }
 
 /* Log terminal */
@@ -888,6 +1005,10 @@ body::after {
   flex: 1;
   text-align: center;
   letter-spacing: .05em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .terminal-body {
@@ -896,13 +1017,20 @@ body::after {
   font-size: .72rem;
   line-height: 1.8;
   min-height: 100px;
-  max-height: 200px;
+  max-height: min(220px, 34vh);
   overflow-y: auto;
   color: var(--ink-dim);
 }
 
-.log-line { display: flex; gap: .6rem; }
+.log-line { display: flex; gap: .6rem; align-items: flex-start; }
 .log-time { color: var(--ink-faint); flex-shrink: 0; }
+.log-info,
+.log-ok,
+.log-warn,
+.log-err {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .log-info { color: var(--ink-dim); }
 .log-ok { color: var(--green); }
 .log-warn { color: var(--gold); }
@@ -929,7 +1057,8 @@ body::after {
 }
 
 .result-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
   align-items: center;
   gap: 1rem;
   padding: .85rem 1rem;
@@ -972,15 +1101,20 @@ body::after {
   padding: 1px 2px;
 }
 
-.result-info { flex: 1; }
+.result-info { min-width: 0; }
 .result-mapping {
   font-family: var(--mono);
   font-size: .7rem;
   color: var(--gold);
   margin-bottom: .25rem;
   letter-spacing: .03em;
+  overflow-wrap: anywhere;
 }
-.result-desc { font-size: .8rem; color: var(--ink-dim); }
+.result-desc {
+  font-size: .8rem;
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
 
 .result-count {
   font-family: var(--mono);
@@ -997,7 +1131,7 @@ body::after {
 /* Stat bar */
 .stat-bar {
   display: none;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: .75rem;
 }
 
@@ -1007,6 +1141,7 @@ body::after {
   border-radius: var(--r);
   padding: 1rem;
   animation: fadeIn .3s ease both;
+  min-width: 0;
 }
 
 .stat-val {
@@ -1038,6 +1173,7 @@ body::after {
   align-items: center;
   justify-content: center;
   gap: .75rem;
+  flex-wrap: wrap;
   padding: .9rem 1.5rem;
   background: var(--green-dim);
   border: 1.5px solid rgba(95,190,142,0.25);
@@ -1050,6 +1186,12 @@ body::after {
   cursor: pointer;
   transition: all .2s;
   letter-spacing: -.01em;
+  text-align: center;
+}
+
+.dl-btn span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .dl-btn:hover {
@@ -1097,7 +1239,10 @@ body::after {
   font-size: .78rem;
   z-index: 1000;
   animation: toastIn .2s ease;
-  white-space: nowrap;
+  width: max-content;
+  max-width: min(32rem, calc(100vw - 2rem));
+  white-space: normal;
+  text-align: center;
 }
 
 @keyframes toastIn {
@@ -1109,13 +1254,15 @@ body::after {
 .footer {
   grid-column: 1 / -1;
   border-top: 1px solid var(--line);
-  padding: .75rem 2rem;
+  padding: .75rem calc(var(--page-gutter) + var(--safe-right)) calc(.75rem + var(--safe-bottom)) calc(var(--page-gutter) + var(--safe-left));
   display: flex;
   align-items: center;
   justify-content: space-between;
   font-family: var(--mono);
   font-size: .65rem;
-  color: var(--ink-faint);
+  color: var(--ink-dim);
+  gap: .5rem 1rem;
+  flex-wrap: wrap;
 }
 
 @keyframes fadeIn {
@@ -1129,11 +1276,131 @@ body::after {
 ::-webkit-scrollbar-thumb { background: var(--ink-faint); border-radius: 2px; }
 
 /* Responsive */
-@media (max-width: 700px) {
-  .shell { grid-template-columns: 1fr; }
-  .left-panel { border-right: none; border-bottom: 1px solid var(--line); }
-  .topbar-right { display: none; }
-  .stat-bar { grid-template-columns: repeat(2,1fr); }
+@media (max-width: 980px) {
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto 1fr auto;
+  }
+
+  .left-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .right-panel {
+    overflow-y: visible;
+  }
+
+  .topbar-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+@media (max-width: 820px) {
+  .left-panel,
+  .right-panel {
+    padding: 1.1rem calc(var(--page-gutter) + var(--safe-right)) 1.1rem calc(var(--page-gutter) + var(--safe-left));
+  }
+
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .55rem;
+  }
+
+  .step {
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    background: var(--card);
+  }
+
+  .step::after {
+    display: none;
+  }
+
+  .stat-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar {
+    align-items: flex-start;
+  }
+
+  .topbar-right {
+    gap: .65rem .9rem;
+  }
+
+  .contrast-group {
+    max-width: 100%;
+  }
+
+  .char-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .result-row {
+    grid-template-columns: 44px minmax(0, 1fr);
+    align-items: flex-start;
+  }
+
+  .result-count {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .dl-btn {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 480px) {
+  .logo-serif {
+    font-size: 1.1rem;
+  }
+
+  .topbar-right {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .lang-switch {
+    justify-content: flex-start;
+  }
+
+  .steps,
+  .stat-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .terminal-bar {
+    padding: .6rem .85rem;
+  }
+
+  .terminal-title {
+    text-align: left;
+  }
+
+  .footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 360px) {
+  .char-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .file-card-top {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .file-thumb {
+    display: none;
+  }
 }
 </style>
 </head>
@@ -1153,6 +1420,13 @@ body::after {
         {% for option_code, option_label in lang_options %}
         <a class="lang-link {% if lang == option_code %}active{% endif %}" href="/?lang={{ option_code }}">{{ option_label }}</a>
         {% endfor %}
+      </div>
+      <div class="contrast-switch">
+        <span class="lang-label">{{ t.contrast_label }}</span>
+        <div class="contrast-group" role="group" aria-label="{{ t.contrast_label }}">
+          <button class="contrast-btn" type="button" data-contrast-target="default">{{ t.contrast_default }}</button>
+          <button class="contrast-btn" type="button" data-contrast-target="high">{{ t.contrast_high }}</button>
+        </div>
       </div>
       <span class="status-dot">{{ t.status_ready }}</span>
       <span>{{ t.engine_name }}</span>
@@ -1216,19 +1490,19 @@ body::after {
     <div class="steps" id="stepsRow">
       <div class="step" id="step1">
         <div class="step-num">1</div>
-        <span>{{ t.step_upload }}</span>
+        <span class="step-label">{{ t.step_upload }}</span>
       </div>
       <div class="step" id="step2">
         <div class="step-num">2</div>
-        <span>{{ t.step_analyze }}</span>
+        <span class="step-label">{{ t.step_analyze }}</span>
       </div>
       <div class="step" id="step3">
         <div class="step-num">3</div>
-        <span>{{ t.step_repair }}</span>
+        <span class="step-label">{{ t.step_repair }}</span>
       </div>
       <div class="step" id="step4">
         <div class="step-num">4</div>
-        <span>{{ t.step_download }}</span>
+        <span class="step-label">{{ t.step_download }}</span>
       </div>
     </div>
 
@@ -1307,6 +1581,7 @@ body::after {
 <script nonce="{{ csp_nonce }}">
 const M = {{ messages|tojson }};
 const currentLang = {{ lang|tojson }};
+const CONTRAST_STORAGE_KEY = 'pdf-repair-contrast';
 let selectedFile = null;
 let startTime = null;
 
@@ -1327,6 +1602,7 @@ const dlBtn     = document.getElementById('dlBtn');
 const dlBtnText = document.getElementById('dlBtnText');
 const dlNote    = document.getElementById('dlNote');
 const charGrid  = document.getElementById('charGrid');
+const contrastButtons = Array.from(document.querySelectorAll('[data-contrast-target]'));
 
 const steps = [1,2,3,4].map(i => document.getElementById('step'+i));
 
@@ -1347,6 +1623,36 @@ function makeOutputName(filename) {
   const suffix = M.output_suffix || '_repaired';
   return filename.replace(/\.pdf$/i, `${suffix}.pdf`);
 }
+
+function normalizeContrastMode(value) {
+  return value === 'high' ? 'high' : 'default';
+}
+
+function applyContrastMode(mode, persist = true) {
+  const nextMode = normalizeContrastMode(mode);
+  const root = document.documentElement;
+
+  if (nextMode === 'high') root.dataset.contrast = 'high';
+  else delete root.dataset.contrast;
+
+  contrastButtons.forEach(button => {
+    const active = button.dataset.contrastTarget === nextMode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+
+  if (persist) {
+    try {
+      window.localStorage.setItem(CONTRAST_STORAGE_KEY, nextMode);
+    } catch (_) {}
+  }
+}
+
+contrastButtons.forEach(button => {
+  button.addEventListener('click', () => applyContrastMode(button.dataset.contrastTarget));
+});
+
+applyContrastMode(document.documentElement.dataset.contrast === 'high' ? 'high' : 'default', false);
 
 // ── File handling ──
 dropZone.addEventListener('dragenter', e => { e.preventDefault(); dropZone.classList.add('over'); });

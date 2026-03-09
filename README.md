@@ -39,6 +39,8 @@ Proje su yaklasimi kullanir:
 ## Temel ozellikler
 
 - Web arayuzu (`app.py`)
+- Mobil ve tablet ekranlara uyumlu responsive tasarim
+- Web arayuzunde kalici yuksek kontrast modu
 - Komut satiri araci (`pdf_tr_fix.py`)
 - In-place CMap patch mantigi
 - Buyuk PDF'lerde hizli calisma
@@ -125,6 +127,12 @@ Dil secimi:
 - Varsayilan dil tarayici diline gore belirlenebilir
 - Elle secmek icin `/?lang=tr` veya `/?lang=en` kullanabilirsiniz
 - Arayuzun sag ustunde `TR / EN` gecisi bulunur
+
+Erisebilirlik ve gorunum:
+
+- Arayuz telefon, tablet ve masaustu ekranlarda responsive calisir
+- Sag ustte `Normal / Yuksek` kontrast anahtari bulunur
+- Kontrast secimi tarayicida saklanir ve sonraki acilislarda korunur
 
 Akis:
 
