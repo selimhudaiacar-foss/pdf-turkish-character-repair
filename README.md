@@ -1,106 +1,243 @@
-# PDF Türkçe Karakter Onarıcı
+# PDF Turkish Character Repair
 
-PDF dosyalarında kopyalama sırasında bozulan Türkçe karakterleri otomatik olarak onarır.
+PDF dosyalarında kopyalama sırasında bozulan Turkce karakterleri duzeltir.
 
-> **Sorun:** Bazı PDF'lerde ğ, ı, İ, ş, Ş gibi Türkçe harfler görsel olarak doğru görünür, ancak kopyalanınca `1`, `_` veya görünmez kontrol karakterlerine dönüşür.  
-> **Çözüm:** Font'ların ToUnicode CMap tablolarındaki hatalı eşleşmeleri tespit edip in-place onarır — PDF yeniden oluşturulmaz, içerik korunur.
+Bazi PDF'lerde metin ekranda dogru gorunur ama kopyalandiginda `g`, `i` veya `s` ailesindeki Turkce karakterler bozulur. Sorun genelde PDF icindeki font `ToUnicode CMap` eslemelerinin hatali olmasindan kaynaklanir. Bu proje PDF'i yeniden olusturmaz; sadece hatali Unicode eslemelerini yerinde yamalar.
 
----
+## Ne ise yarar?
 
-## Özellikler
+Su tip bozulmalari hedefler:
 
-- **6 karakter** onarımı: `ğ` `Ğ` `ı` `İ` `ş` `Ş`
-- **Sıfır veri kaybı** — sadece CMap tabloları yamalanır
-- **Web arayüzü** (`app.py`) ve **CLI** (`pdf_tr_fix.py`) desteği
-- Büyük PDF'lerde hızlı — 400+ sayfalık dosyayı ~5 saniyede işler
+- `ğ` yerine kontrol karakteri
+- `Ğ` yerine kontrol karakteri
+- `ı` yerine `1`
+- `İ` yerine `1`
+- `ş` yerine `_`
+- `Ş` yerine `_`
 
-## Desteklenen Hata Tipleri
+Bu sayede:
 
-| Bozuk | Doğru | Tespit yöntemi |
-|-------|-------|----------------|
-| `U+001F` (kontrol karakteri) | **ğ** | Kesin — kontrol karakteri |
-| `U+001E` (kontrol karakteri) | **Ğ** | Kesin — kontrol karakteri |
-| `1` (rakam) | **ı** | CID'in `i` harfine komşu olması |
-| `1` (rakam) | **İ** | Birden fazla `1` var, bu CID'in digit komşusu yok |
-| `_` (alt çizgi) | **ş** | CID'in `s` harfine yakın olması |
-| `_` (alt çizgi) | **Ş** | CID'in `S` harfine yakın olması |
+- PDF'in gorunumu degismez
+- Orijinal sayfa yapisi korunur
+- Kopyala-yapistir sonucu duzelir
+- OCR veya yeniden render gerekmez
 
----
+## Nasil calisir?
+
+Arac, PDF icindeki font nesnelerinin `ToUnicode CMap` tablolarini inceler. Bu tablolar CID degerlerini Unicode kod noktalarina map eder. Hedeflenen hata sinifinda PDF gorunurde dogru olsa da bu tablolar yanlis doldurulmustur.
+
+Proje su yaklasimi kullanir:
+
+1. PDF acilir.
+2. Her fontun `ToUnicode` akisi okunur.
+3. Hedef karakterler icin bozuk eslemeler tespit edilir.
+4. Sadece ilgili CMap satirlari patch edilir.
+5. PDF yeni bir icerik uretilmeden kaydedilir.
+
+## Temel ozellikler
+
+- Web arayuzu (`app.py`)
+- Komut satiri araci (`pdf_tr_fix.py`)
+- In-place CMap patch mantigi
+- Buyuk PDF'lerde hizli calisma
+- Guvenilmeyen PDF girdileri icin temel guvenlik sinirlari
+- Gorsel veri kaybi olmadan duzeltme
+
+## Desteklenen hata tipleri
+
+| Bozuk | Dogru | Tespit mantigi |
+|---|---|---|
+| `U+001F` | `ğ` | Kontrol karakteri oldugu icin kesin eslesme |
+| `U+001E` | `Ğ` | Kontrol karakteri oldugu icin kesin eslesme |
+| `1` | `ı` | CID'in `i` karakterine komsu olmasi |
+| `1` | `İ` | Birden fazla `1` eslemesi icinde rakam komsulugu olmamasi |
+| `_` | `ş` | CID'in `s` karakterine yakin olmasi |
+| `_` | `Ş` | CID'in `S` karakterine yakin olmasi |
+
+## Ne zaman ise yarar?
+
+Bu arac ozellikle su durumda faydalidir:
+
+- PDF'te metin secilebiliyor ama kopyalaninca bozuluyor
+- PDF gorunurde dogru, metin cikariminda yanlis
+- Sorun OCR degil, encoding veya CMap kaynakli
+- Ozellikle Turkce resmi evraklar, akademik PDF'ler ve raporlarda karakter bozulmasi var
+
+## Ne zaman ise yaramaz?
+
+Su senaryolar bu projenin kapsami disindadir:
+
+- PDF icinde secilebilir metin yoksa
+- Belge taranmis goruntu ise
+- Sorun font CMap degilse
+- Hedef karakterler disinda farkli bir encoding bozulmasi varsa
+- PDF tamamen kirik veya acilamiyorsa
 
 ## Kurulum
 
+### Gereksinimler
+
+- Python 3.8+
+- `flask`
+- `pikepdf`
+
+### Depoyu klonlama
+
 ```bash
-git clone https://github.com/kullanici/pdf-turkish-fix
-cd pdf-turkish-fix
+git clone https://github.com/selimhudaiacar-foss/pdf-turkish-character-repair.git
+cd pdf-turkish-character-repair
+```
 
+### Sanal ortam ve bagimliliklar
+
+```bash
 python3 -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
-
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
----
+Windows icin:
 
-## Kullanım
+```powershell
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-### Web Arayüzü
+## Hizli baslangic
+
+### Web arayuzu
 
 ```bash
 python3 app.py
-# → http://localhost:5000
 ```
 
-PDF'i sürükle-bırak veya tıklayarak yükle, "Analiz Et & Onar" butonuna bas, onarılmış dosyayı indir.
+Ardindan tarayicida `http://127.0.0.1:5000` adresini acin.
 
-### Komut Satırı (CLI)
+Akis:
+
+1. PDF'i surukleyip birakin veya secin.
+2. `Analiz Et & Onar` butonuna basin.
+3. Bulunan hata tiplerini inceleyin.
+4. Onarilmis PDF'i indirin.
+
+### CLI kullanimi
 
 ```bash
-# Onar (çıktı: dosya_onarildi.pdf)
 python3 pdf_tr_fix.py belge.pdf
+```
 
-# Çıktı dosyasını belirt
+Varsayilan cikti:
+
+```text
+belge_onarildi.pdf
+```
+
+Ozel cikti adi:
+
+```bash
 python3 pdf_tr_fix.py belge.pdf onarilmis.pdf
+```
 
-# Sadece analiz et, değiştirme
+Sadece analiz:
+
+```bash
 python3 pdf_tr_fix.py belge.pdf --analyze
 ```
 
-#### Örnek çıktı
+## Ornek CLI cikti
 
-```
-Açılıyor: belge.pdf
+```text
+Aciliyor: belge.pdf
 
-Tespit edilen düzeltmeler:
+Tespit edilen duzeltmeler:
   '_' → ş: 772 font
   U+001F → ğ: 752 font
   '1' → ı: 697 font
   '1' → İ: 384 font
   '_' → Ş: 176 font
 
-Düzeltilen font: 879  |  Toplam patch: 2781
+Duzeltilen font: 879  |  Toplam patch: 2781
 Kaydedildi: belge_onarildi.pdf
 ```
 
----
+## Web API ozeti
 
-## Teknik Detay
+Web arayuzu iki endpoint kullanir:
 
-PDF'lerdeki font nesneleri, her karakter kodunu (CID) Unicode kod noktasına eşleyen **ToUnicode CMap** tablolarına sahiptir. Bazı PDF oluşturucular bu tabloları hatalı doldurur:
+- `POST /analyze`
+  PDF'i analiz eder, bulunan hata turlerini JSON olarak dondurur.
+- `POST /fix`
+  PDF'i onarir ve duzeltilmis PDF'i indirilebilir yanit olarak dondurur.
 
-- Türkçe özgü karakterler yerine benzer görünen ASCII veya kontrol karakterleri yazar
-- Örnek: `ğ` (U+011F) yerine `U+001F` (kontrol), `ı` (U+0131) yerine `1` (U+0031)
+Bu endpoint'ler esasen tarayici arayuzu icin tasarlanmistir; resmi public API sozu vermez.
 
-Bu araç, pikepdf ile CMap tablolarını okur, hatalı eşleşmeleri istatistiksel örüntülerle tespit eder ve doğrudan yamar. PDF'in görsel içeriği hiç değişmez.
+## Guvenlik notlari
 
----
+`v2.2.0` ile birlikte su sertlestirmeler eklendi:
 
-## Gereksinimler
+- Yuklenen dosya PDF imzasi icin dogrulaniyor
+- Asiri buyuk `CMap` akislari reddediliyor
+- Asiri genis mapping araliklari sinirlaniyor
+- Kontrolsuz ic hata mesajlari istemciye sizdirilmiyor
+- Dosya adlari guvenli hale getiriliyor
+- Tarayici tarafinda XSS riskini azaltan CSP ve guvenlik basliklari ekleniyor
 
-- Python 3.8+
-- `flask` ≥ 3.0
-- `pikepdf` ≥ 8.0
+Yine de internet uzerinde acik servis olarak kullanilacaksa:
 
----
+- Flask development server yerine production WSGI sunucusu kullanin
+- Reverse proxy arkasinda calistirin
+- Upload rate limit uygulayin
+- TLS sonlandirmasi ekleyin
+
+## Performans
+
+Calisma su faktorlerden etkilenir:
+
+- Sayfa sayisi
+- Font sayisi
+- `ToUnicode CMap` akisi sayisi
+- PDF'in genel yapisi
+
+Arac tam metin cikarimi yapmadigi icin bircok belge icin hafif kalir. En pahali kisim ilgili font tablolarinin taranmasidir.
+
+## Proje yapisi
+
+```text
+app.py           Flask tabanli web arayuzu
+pdf_tr_fix.py    Komut satiri araci
+requirements.txt Python bagimliliklari
+CHANGELOG.md     Surum notlari
+```
+
+## Gelistirme
+
+Yerelde hizli dogrulama icin:
+
+```bash
+python3 -m py_compile app.py pdf_tr_fix.py
+```
+
+Bagimlilik denetimi:
+
+```bash
+./bin/python -m pip_audit
+```
+
+## Sinirlar
+
+- Su anda yalnizca belirli Turkce karakter bozulmalarina odaklidir
+- Her bozuk PDF icin evrensel bir cozum degildir
+- Heuristik kurallar sebebiyle nadir belgelerde hic bulgu olmayabilir
+- Font'larda `ToUnicode` akisi yoksa arac etkisiz kalabilir
+
+## Yol haritasi icin fikirler
+
+- Daha fazla Turkce karakter varyanti
+- Batch isleme modu
+- Test PDF koleksiyonu
+- Otomatik regresyon testleri
+- Docker paketi
 
 ## Lisans
 
