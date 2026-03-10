@@ -1,14 +1,14 @@
 # PDF Turkish Character Repair
 
-PDF dosyalarında kopyalama sırasında bozulan Turkce karakterleri duzeltir.
+PDF dosyalarında kopyalama sırasında bozulan Türkçe karakterleri düzeltir.
 
-Bazi PDF'lerde metin ekranda dogru gorunur ama kopyalandiginda `g`, `i` veya `s` ailesindeki Turkce karakterler bozulur. Sorun genelde PDF icindeki font `ToUnicode CMap` eslemelerinin hatali olmasindan kaynaklanir. Bu proje PDF'i yeniden olusturmaz; sadece hatali Unicode eslemelerini yerinde yamalar.
+Bazı PDF'lerde metin ekranda doğru görünür ama kopyalandığında `ğ`, `ı`, `İ`, `ş` gibi Türkçe karakterler bozulur. Bu sorun genellikle PDF içindeki font `ToUnicode CMap` eşlemelerinin hatalı olmasından kaynaklanır. Bu proje PDF'i yeniden oluşturmaz; yalnızca hatalı Unicode eşlemelerini yerinde yamalar.
 
-> Not: Kurulum, calistirma, test ve gelistirme komutlarinin tamami icin bir sanal ortam (`venv`) kullanmaniz tavsiye edilir.
+> Not: Kurulum, çalıştırma, test ve geliştirme komutlarının tamamı için bir sanal ortam (`venv`) kullanmanız tavsiye edilir.
 
-## Ne ise yarar?
+## Ne işe yarar?
 
-Su tip bozulmalari hedefler:
+Şu tür bozulmaları hedefler:
 
 - `ğ` yerine kontrol karakteri
 - `Ğ` yerine kontrol karakteri
@@ -19,72 +19,72 @@ Su tip bozulmalari hedefler:
 
 Bu sayede:
 
-- PDF'in gorunumu degismez
-- Orijinal sayfa yapisi korunur
-- Kopyala-yapistir sonucu duzelir
+- PDF'in görünümü değişmez
+- Orijinal sayfa yapısı korunur
+- Kopyala-yapıştır sonucu düzelir
 - OCR veya yeniden render gerekmez
 
-## Nasil calisir?
+## Nasıl çalışır?
 
-Arac, PDF icindeki font nesnelerinin `ToUnicode CMap` tablolarini inceler. Bu tablolar CID degerlerini Unicode kod noktalarina map eder. Hedeflenen hata sinifinda PDF gorunurde dogru olsa da bu tablolar yanlis doldurulmustur.
+Araç, PDF içindeki font nesnelerinin `ToUnicode CMap` tablolarını inceler. Bu tablolar CID değerlerini Unicode kod noktalarına eşler. Hedeflenen hata sınıfında PDF görünürde doğru olsa da bu tablolar yanlış doldurulmuştur.
 
-Mevcut surum iki asamali calisir:
+Mevcut sürüm iki aşamalı çalışır:
 
-1. Mumkunse gomulu font programinin gercek `cmap` tablosu okunur.
-2. `Type0/CIDFontType2` fontlarda Unicode -> glyph/GID eslemesi, PDF'in `CIDToGIDMap` bilgisiyle CID tarafina geri cevrilir.
-3. Basit `TrueType` ve `Type1` fontlarda PDF `Encoding` bilgisi ile charcode -> glyph -> GID zinciri kurulur.
-4. Ayni glyph icin birden fazla Unicode varsa harf > isaret > rakam > noktalama > sembol sirali bir tercih kuraliyla en anlamli kod nokta secilir.
-5. Fonttan gelen veri yoksa veya guvenli degilse onceki Turkce heuristikler fallback olarak kullanilir.
+1. Mümkünse gömülü font programının gerçek `cmap` tablosu okunur.
+2. `Type0/CIDFontType2` fontlarda `Unicode -> glyph/GID` eşlemesi, PDF'in `CIDToGIDMap` bilgisiyle CID tarafına geri çevrilir.
+3. Basit `TrueType` ve `Type1` fontlarda PDF `Encoding` bilgisi ile `charcode -> glyph -> GID` zinciri kurulur.
+4. Aynı glyph için birden fazla Unicode varsa harf > işaret > rakam > noktalama > sembol sıralı bir tercih kuralıyla en anlamlı kod noktası seçilir.
+5. Fonttan güvenilir veri alınamazsa mevcut Türkçe heuristikler fallback olarak kullanılır.
 
-Proje su yaklasimi kullanir:
+Proje şu yaklaşımı izler:
 
-1. PDF acilir.
-2. Her fontun `ToUnicode` akisi ve mumkunse gomulu font verisi okunur.
-3. Hedef karakterler icin bozuk eslemeler tespit edilir.
-4. Sadece ilgili CMap satirlari patch edilir.
-5. PDF yeni bir icerik uretilmeden kaydedilir.
+1. PDF açılır.
+2. Her fontun `ToUnicode` akışı ve mümkünse gömülü font verisi okunur.
+3. Hedef karakterler için bozuk eşlemeler tespit edilir.
+4. Yalnızca ilgili CMap satırları patch edilir.
+5. PDF, içerik yeniden üretilmeden kaydedilir.
 
-## Temel ozellikler
+## Temel özellikler
 
-- Web arayuzu (`app.py`)
-- Mobil ve tablet ekranlara uyumlu responsive tasarim
-- Web arayuzunde kalici yuksek kontrast modu
-- Komut satiri araci (`pdf_tr_fix.py`)
-- Gomulu font `cmap` tablosundan CID ve simple-font tabanli dogrulama
-- In-place CMap patch mantigi
-- Buyuk PDF'lerde hizli calisma
-- Guvenilmeyen PDF girdileri icin temel guvenlik sinirlari
-- Gorsel veri kaybi olmadan duzeltme
+- Web arayüzü (`app.py`)
+- Mobil ve tablet ekranlara uyumlu responsive tasarım
+- Web arayüzünde kalıcı yüksek kontrast modu
+- Komut satırı aracı (`pdf_tr_fix.py`)
+- Gömülü font `cmap` tablosundan CID ve simple-font tabanlı doğrulama
+- In-place CMap patch mantığı
+- Büyük PDF'lerde hızlı çalışma
+- Güvenilmeyen PDF girdileri için temel güvenlik sınırları
+- Görsel veri kaybı olmadan düzeltme
 
 ## Desteklenen hata tipleri
 
-| Bozuk | Dogru | Tespit mantigi |
+| Bozuk | Doğru | Tespit mantığı |
 |---|---|---|
-| `U+001F` | `ğ` | Kontrol karakteri oldugu icin kesin eslesme |
-| `U+001E` | `Ğ` | Kontrol karakteri oldugu icin kesin eslesme |
-| `1` | `ı` | CID'in `i` karakterine komsu olmasi |
-| `1` | `İ` | Birden fazla `1` eslemesi icinde rakam komsulugu olmamasi |
-| `_` | `ş` | CID'in `s` karakterine yakin olmasi |
-| `_` | `Ş` | CID'in `S` karakterine yakin olmasi |
+| `U+001F` | `ğ` | Kontrol karakteri olduğu için kesin eşleşme |
+| `U+001E` | `Ğ` | Kontrol karakteri olduğu için kesin eşleşme |
+| `1` | `ı` | CID'in `i` karakterine komşu olması |
+| `1` | `İ` | Birden fazla `1` eşlemesi içinde rakam komşuluğu olmaması |
+| `_` | `ş` | CID'in `s` karakterine yakın olması |
+| `_` | `Ş` | CID'in `S` karakterine yakın olması |
 
-## Ne zaman ise yarar?
+## Ne zaman işe yarar?
 
-Bu arac ozellikle su durumda faydalidir:
+Bu araç özellikle şu durumlarda faydalıdır:
 
-- PDF'te metin secilebiliyor ama kopyalaninca bozuluyor
-- PDF gorunurde dogru, metin cikariminda yanlis
-- Sorun OCR degil, encoding veya CMap kaynakli
-- Ozellikle Turkce resmi evraklar, akademik PDF'ler ve raporlarda karakter bozulmasi var
+- PDF'te metin seçilebiliyor ama kopyalanınca bozuluyorsa
+- PDF görünürde doğru, metin çıkarımında yanlışsa
+- Sorun OCR değil, encoding veya CMap kaynaklıysa
+- Özellikle Türkçe resmî evraklar, akademik PDF'ler ve raporlarda karakter bozulması varsa
 
-## Ne zaman ise yaramaz?
+## Ne zaman işe yaramaz?
 
-Su senaryolar bu projenin kapsami disindadir:
+Şu senaryolar bu projenin kapsamı dışındadır:
 
-- PDF icinde secilebilir metin yoksa
-- Belge taranmis goruntu ise
-- Sorun font CMap degilse
-- Hedef karakterler disinda farkli bir encoding bozulmasi varsa
-- PDF tamamen kirik veya acilamiyorsa
+- PDF içinde seçilebilir metin yoksa
+- Belge taranmış görüntü ise
+- Sorun font CMap kaynaklı değilse
+- Hedef karakterler dışında farklı bir encoding bozulması varsa
+- PDF tamamen bozuksa veya açılamıyorsa
 
 ## Kurulum
 
@@ -102,9 +102,9 @@ git clone https://github.com/selimhudaiacar-foss/pdf-turkish-character-repair.gi
 cd pdf-turkish-character-repair
 ```
 
-### Sanal ortam ve bagimliliklar
+### Sanal ortam ve bağımlılıklar
 
-Asagidaki kurulum akisi tavsiye edilen yoldur; komutlari bir `venv` icinde calistirin.
+Aşağıdaki kurulum akışı tavsiye edilen yoldur; komutları bir `venv` içinde çalıştırın.
 
 ```bash
 python3 -m venv venv
@@ -112,7 +112,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Windows icin:
+Windows için:
 
 ```powershell
 python -m venv venv
@@ -120,50 +120,50 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## Hizli baslangic
+## Hızlı başlangıç
 
-Bu bolumdeki tum komutlar, aktif bir `venv` icinde calistiriliyor varsayimi ile verilmiştir.
+Bu bölümdeki tüm komutlar, aktif bir `venv` içinde çalıştırılıyor varsayımıyla verilmiştir.
 
-### Web arayuzu
+### Web arayüzü
 
 ```bash
 python3 app.py
 ```
 
-Ardindan tarayicida `http://127.0.0.1:5000` adresini acin.
+Ardından tarayıcıda `http://127.0.0.1:5000` adresini açın.
 
-Dil secimi:
+Dil seçimi:
 
-- Varsayilan dil tarayici diline gore belirlenebilir
-- Elle secmek icin `/?lang=tr` veya `/?lang=en` kullanabilirsiniz
-- Arayuzun sag ustunde `TR / EN` gecisi bulunur
+- Varsayılan dil tarayıcı diline göre belirlenebilir
+- Elle seçmek için `/?lang=tr` veya `/?lang=en` kullanabilirsiniz
+- Arayüzün sağ üstünde `TR / EN` geçişi bulunur
 
-Erisebilirlik ve gorunum:
+Erişilebilirlik ve görünüm:
 
-- Arayuz telefon, tablet ve masaustu ekranlarda responsive calisir
-- Sag ustte `Normal / Yuksek` kontrast anahtari bulunur
-- Kontrast secimi tarayicida saklanir ve sonraki acilislarda korunur
+- Arayüz telefon, tablet ve masaüstü ekranlarda responsive çalışır
+- Sağ üstte `Normal / Yüksek` kontrast anahtarı bulunur
+- Kontrast seçimi tarayıcıda saklanır ve sonraki açılışlarda korunur
 
-Akis:
+Akış:
 
-1. PDF'i surukleyip birakin veya secin.
-2. `Analiz Et & Onar` butonuna basin.
+1. PDF'i sürükleyip bırakın veya seçin.
+2. `Analiz Et & Onar` butonuna basın.
 3. Bulunan hata tiplerini inceleyin.
-4. Onarilmis PDF'i indirin.
+4. Onarılmış PDF'i indirin.
 
-### CLI kullanimi
+### CLI kullanımı
 
 ```bash
 python3 pdf_tr_fix.py belge.pdf
 ```
 
-Varsayilan cikti:
+Varsayılan çıktı:
 
 ```text
 belge_onarildi.pdf
 ```
 
-Ozel cikti adi:
+Özel çıktı adı:
 
 ```bash
 python3 pdf_tr_fix.py belge.pdf onarilmis.pdf
@@ -175,131 +175,85 @@ Sadece analiz:
 python3 pdf_tr_fix.py belge.pdf --analyze
 ```
 
-Ingilizce cikti:
+İngilizce çıktı:
 
 ```bash
 python3 pdf_tr_fix.py --lang en belge.pdf
 ```
 
-Turkce ciktiyi zorlamak icin:
+Türkçe çıktıyı zorlamak için:
 
 ```bash
 python3 pdf_tr_fix.py --lang tr belge.pdf
 ```
 
-## Ornek CLI cikti
+## Örnek CLI çıktısı
 
 ```text
-Aciliyor: belge.pdf
+Açılıyor: belge.pdf
 
-Tespit edilen duzeltmeler:
+Tespit edilen düzeltmeler:
   '_' → ş: 772 font
   U+001F → ğ: 752 font
   '1' → ı: 697 font
   '1' → İ: 384 font
   '_' → Ş: 176 font
 
-Duzeltilen font: 879  |  Toplam patch: 2781
+Düzeltilen font: 879  |  Toplam patch: 2781
 Kaydedildi: belge_onarildi.pdf
 ```
 
-## Web API ozeti
+## Web API özeti
 
-Tarayici arayuzu varsayilan olarak tek-upload akisi kullanir:
+Tarayıcı arayüzü varsayılan olarak tek-upload akışı kullanır:
 
 - `POST /process`
-  PDF'i tek istekte analiz eder, gerekiyorsa onarir ve gecici indirme adresi dondurur.
+  PDF'i tek istekte analiz eder, gerekiyorsa onarır ve geçici indirme adresi döndürür.
 - `GET /download/<token>`
-  `POST /process` tarafindan uretilen gecici onarilmis PDF'i indirir.
+  `POST /process` tarafından üretilen geçici onarılmış PDF'i indirir.
 
-Uyumluluk icin su endpoint'ler korunur:
+Uyumluluk için şu endpoint'ler korunur:
 
 - `POST /analyze`
-  PDF'i sadece analiz eder, bulunan hata turlerini JSON olarak dondurur.
+  PDF'i sadece analiz eder, bulunan hata türlerini JSON olarak döndürür.
 - `POST /fix`
-  PDF'i dogrudan onarir ve duzeltilmis PDF'i indirilebilir yanit olarak dondurur.
+  PDF'i doğrudan onarır ve düzeltilmiş PDF'i indirilebilir yanıt olarak döndürür.
 
-Bu endpoint'ler esasen tarayici arayuzu icin tasarlanmistir; resmi public API sozu vermez.
+Bu endpoint'ler esasen tarayıcı arayüzü için tasarlanmıştır; resmî public API sözü vermez.
 
 ## Deploy notu
 
-Render benzeri production ortamlarda Flask development server yerine asagidaki baslatma komutu tercih edilmelidir:
+Render benzeri production ortamlarda Flask development server yerine aşağıdaki başlatma komutu tercih edilmelidir:
 
 ```bash
 gunicorn app:app
 ```
 
-## Guvenlik notlari
+## Güvenlik notları
 
-Guncel surumlerde su sertlestirmeler bulunur:
+Güncel sürümlerde şu sertleştirmeler bulunur:
 
-- Yuklenen dosya PDF imzasi icin dogrulaniyor
-- Asiri buyuk `CMap` akislari reddediliyor
-- Asiri genis mapping araliklari sinirlaniyor
-- Kontrolsuz ic hata mesajlari istemciye sizdirilmiyor
-- Dosya adlari guvenli hale getiriliyor
-- Tarayici tarafinda XSS riskini azaltan CSP ve guvenlik basliklari ekleniyor
+- Yüklenen dosya PDF imzası için doğrulanır
+- Aşırı büyük `CMap` akışları reddedilir
+- Aşırı geniş mapping aralıkları sınırlandırılır
+- Kontrolsüz iç hata mesajları istemciye sızdırılmaz
+- Dosya adları güvenli hâle getirilir
+- Tarayıcı tarafında XSS riskini azaltan CSP ve güvenlik başlıkları eklenir
 
-Yine de internet uzerinde acik servis olarak kullanilacaksa:
+Yine de internet üzerinde açık servis olarak kullanılacaksa:
 
-- Flask development server yerine production WSGI sunucusu kullanin
-- Reverse proxy arkasinda calistirin
-- Upload rate limit uygulayin
-- TLS sonlandirmasi ekleyin
+- Flask development server yerine production WSGI sunucusu kullanın
+- Reverse proxy arkasında çalıştırın
+- Upload rate limit uygulayın
+- TLS sonlandırması ekleyin
 
 ## Performans
 
-Calisma su faktorlerden etkilenir:
+Çalışma süresi şu faktörlerden etkilenir:
 
-- Sayfa sayisi
-- Font sayisi
-- `ToUnicode CMap` akisi sayisi
-- PDF'in genel yapisi
+- Sayfa sayısı
+- Font sayısı
+- `ToUnicode CMap` akışı sayısı
+- PDF'in genel yapısı
 
-Arac tam metin cikarimi yapmadigi icin bircok belge icin hafif kalir. En pahali kisim ilgili font tablolarinin taranmasidir.
-
-## Proje yapisi
-
-```text
-app.py           Flask tabanli web arayuzu
-pdf_tr_fix.py    Komut satiri araci
-requirements.txt Python bagimliliklari
-CHANGELOG.md     Surum notlari
-```
-
-## Gelistirme
-
-Gelistirme araclarini da ayri bir `venv` icinde calistirmaniz tavsiye edilir.
-
-Yerelde hizli dogrulama icin:
-
-```bash
-source venv/bin/activate
-python -m py_compile app.py pdf_tr_fix.py
-```
-
-Bagimlilik denetimi:
-
-```bash
-source venv/bin/activate
-python -m pip_audit
-```
-
-## Sinirlar
-
-- Su anda yalnizca belirli Turkce karakter bozulmalarina odaklidir
-- Her bozuk PDF icin evrensel bir cozum degildir
-- Heuristik kurallar sebebiyle nadir belgelerde hic bulgu olmayabilir
-- Font'larda `ToUnicode` akisi yoksa arac etkisiz kalabilir
-
-## Yol haritasi icin fikirler
-
-- Daha fazla Turkce karakter varyanti
-- Batch isleme modu
-- Test PDF koleksiyonu
-- Otomatik regresyon testleri
-- Docker paketi
-
-## Lisans
-
-MIT
+Araç tam metin çıkarımı yapmadığı için birçok belge için hafif kalır. En pahalı kısım ilgili font tablolarının taranmasıdır.
