@@ -28,10 +28,18 @@ Bu sayede:
 
 Arac, PDF icindeki font nesnelerinin `ToUnicode CMap` tablolarini inceler. Bu tablolar CID degerlerini Unicode kod noktalarina map eder. Hedeflenen hata sinifinda PDF gorunurde dogru olsa da bu tablolar yanlis doldurulmustur.
 
+Mevcut surum iki asamali calisir:
+
+1. Mumkunse gomulu font programinin gercek `cmap` tablosu okunur.
+2. `Type0/CIDFontType2` fontlarda Unicode -> glyph/GID eslemesi, PDF'in `CIDToGIDMap` bilgisiyle CID tarafina geri cevrilir.
+3. Basit `TrueType` ve `Type1` fontlarda PDF `Encoding` bilgisi ile charcode -> glyph -> GID zinciri kurulur.
+4. Ayni glyph icin birden fazla Unicode varsa harf > isaret > rakam > noktalama > sembol sirali bir tercih kuraliyla en anlamli kod nokta secilir.
+5. Fonttan gelen veri yoksa veya guvenli degilse onceki Turkce heuristikler fallback olarak kullanilir.
+
 Proje su yaklasimi kullanir:
 
 1. PDF acilir.
-2. Her fontun `ToUnicode` akisi okunur.
+2. Her fontun `ToUnicode` akisi ve mumkunse gomulu font verisi okunur.
 3. Hedef karakterler icin bozuk eslemeler tespit edilir.
 4. Sadece ilgili CMap satirlari patch edilir.
 5. PDF yeni bir icerik uretilmeden kaydedilir.
@@ -42,6 +50,7 @@ Proje su yaklasimi kullanir:
 - Mobil ve tablet ekranlara uyumlu responsive tasarim
 - Web arayuzunde kalici yuksek kontrast modu
 - Komut satiri araci (`pdf_tr_fix.py`)
+- Gomulu font `cmap` tablosundan CID ve simple-font tabanli dogrulama
 - In-place CMap patch mantigi
 - Buyuk PDF'lerde hizli calisma
 - Guvenilmeyen PDF girdileri icin temel guvenlik sinirlari
@@ -83,6 +92,7 @@ Su senaryolar bu projenin kapsami disindadir:
 
 - Python 3.8+
 - `flask`
+- `fonttools`
 - `pikepdf`
 
 ### Depoyu klonlama

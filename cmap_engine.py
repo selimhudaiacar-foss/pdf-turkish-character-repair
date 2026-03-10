@@ -1,5 +1,10 @@
 import re
+import unicodedata
 from collections import defaultdict
+from io import BytesIO
+
+from fontTools import agl
+from fontTools.encodings import MacRoman, StandardEncoding
 
 _BLOCK_TOKENS = (
     ('bfrange', 'beginbfrange', 'endbfrange'),
@@ -48,7 +53,126 @@ def parse_mappings(cmap_text, consume_mapping_budget):
     return mappings
 
 
-def find_fixes(mappings):
+def find_fixes(mappings, font_obj=None):
+    fixes = {}
+
+    if font_obj is not None:
+        try:
+            fixes.update(find_font_cmap_fixes(mappings, extract_font_cid_to_unicode(font_obj)))
+        except Exception:
+            pass
+
+    for cid, fix in _find_heuristic_fixes(mappings).items():
+        fixes.setdefault(cid, fix)
+
+    return fixes
+
+
+def find_font_cmap_fixes(mappings, cid_to_unicode):
+    fixes = {}
+
+    for cid, current_unicode in mappings.items():
+        candidate_unicode = cid_to_unicode.get(cid)
+        if candidate_unicode is None or candidate_unicode == current_unicode:
+            continue
+        if _should_replace_with_font_unicode(current_unicode, candidate_unicode):
+            fixes[cid] = (current_unicode, candidate_unicode)
+
+    return fixes
+
+
+def build_cid_to_unicode_map(unicode_to_gid, cid_to_gid=None):
+    gid_to_preferred_unicode = build_gid_to_unicode_map(unicode_to_gid)
+
+    if cid_to_gid is None:
+        return dict(gid_to_preferred_unicode)
+
+    cid_to_unicode = {}
+    items = cid_to_gid.items() if hasattr(cid_to_gid, 'items') else enumerate(cid_to_gid)
+    for cid, gid in items:
+        unicode_codepoint = gid_to_preferred_unicode.get(gid)
+        if unicode_codepoint is not None:
+            cid_to_unicode[int(cid)] = unicode_codepoint
+    return cid_to_unicode
+
+
+def build_gid_to_unicode_map(unicode_to_gid):
+    gid_to_unicode_candidates = defaultdict(list)
+
+    for unicode_codepoint, gid in unicode_to_gid.items():
+        if not isinstance(gid, int) or gid <= 0:
+            continue
+        if not _is_valid_codepoint(unicode_codepoint):
+            continue
+        gid_to_unicode_candidates[gid].append(unicode_codepoint)
+
+    gid_to_preferred_unicode = {
+        gid: _select_preferred_unicode(codepoints)
+        for gid, codepoints in gid_to_unicode_candidates.items()
+        if codepoints
+    }
+    return gid_to_preferred_unicode
+
+
+def build_simple_font_code_to_unicode_map(unicode_to_gid, code_to_unicode=None, code_to_glyph_name=None, glyph_name_to_gid=None):
+    gid_to_preferred_unicode = build_gid_to_unicode_map(unicode_to_gid)
+    code_to_unicode_map = {}
+    codepoints = set()
+    if code_to_unicode:
+        codepoints.update(code_to_unicode)
+    if code_to_glyph_name:
+        codepoints.update(code_to_glyph_name)
+
+    for code in codepoints:
+        gid = None
+        glyph_name = code_to_glyph_name.get(code) if code_to_glyph_name else None
+        if glyph_name and glyph_name_to_gid:
+            gid = glyph_name_to_gid.get(glyph_name)
+        if gid is None and code_to_unicode:
+            unicode_codepoint = code_to_unicode.get(code)
+            if unicode_codepoint is not None:
+                gid = unicode_to_gid.get(unicode_codepoint)
+        if gid is None:
+            continue
+        preferred_unicode = gid_to_preferred_unicode.get(gid)
+        if preferred_unicode is not None:
+            code_to_unicode_map[int(code)] = preferred_unicode
+
+    return code_to_unicode_map
+
+
+def extract_font_cid_to_unicode(font_obj):
+    subtype = str(font_obj.get('/Subtype', ''))
+
+    if subtype == '/Type0' or subtype == '/CIDFontType2':
+        cid_font = _resolve_cid_font(font_obj)
+        if cid_font is None:
+            return {}
+
+        font_program = _extract_font_program(cid_font)
+        if not font_program:
+            return {}
+
+        return build_cid_to_unicode_map(font_program['unicode_to_gid'], _read_cid_to_gid_map(cid_font))
+
+    if subtype in {'/TrueType', '/Type1', '/MMType1'}:
+        font_program = _extract_font_program(font_obj)
+        if not font_program:
+            return {}
+        code_to_unicode, code_to_glyph_name = _read_simple_font_encoding(font_obj)
+        if not code_to_unicode and not code_to_glyph_name:
+            return {}
+        return build_simple_font_code_to_unicode_map(
+            font_program['unicode_to_gid'],
+            code_to_unicode=code_to_unicode,
+            code_to_glyph_name=code_to_glyph_name,
+            glyph_name_to_gid=font_program['glyph_name_to_gid'],
+        )
+
+    return {}
+
+
+def _find_heuristic_fixes(mappings):
     rev = defaultdict(list)
     for cid, uni in mappings.items():
         rev[uni].append(cid)
@@ -109,9 +233,13 @@ def patch_cmap(cmap_text, fixes):
 
 
 def collect_font_cmap_streams(pdf):
+    return [cmap_stream for _, cmap_stream in collect_font_cmap_records(pdf)]
+
+
+def collect_font_cmap_records(pdf):
     import pikepdf
 
-    streams = []
+    records = []
     seen_streams = set()
     seen_resources = set()
     seen_xobjects = set()
@@ -129,7 +257,7 @@ def collect_font_cmap_streams(pdf):
             return
 
         seen_streams.add(stream_key)
-        streams.append(cmap_stream)
+        records.append((font_obj, cmap_stream))
 
     def walk_resources(resources, inherited_resources=None):
         effective_resources = resources if isinstance(resources, pikepdf.Dictionary) else inherited_resources
@@ -183,7 +311,7 @@ def collect_font_cmap_streams(pdf):
         if isinstance(obj, pikepdf.Dictionary) and obj.get('/Type') == '/Font':
             add_font(obj)
 
-    return streams
+    return records
 
 
 def _iter_cmap_blocks(cmap_text):
@@ -332,3 +460,298 @@ def _object_key(obj):
     except Exception:
         pass
     return ('direct', id(obj))
+
+
+def _resolve_cid_font(font_obj):
+    subtype = str(font_obj.get('/Subtype', ''))
+
+    if subtype == '/Type0':
+        encoding = str(font_obj.get('/Encoding', ''))
+        if encoding not in {'/Identity-H', '/Identity-V'}:
+            return None
+
+        descendants = font_obj.get('/DescendantFonts', [])
+        if not descendants:
+            return None
+
+        descendant_font = descendants[0]
+        if str(descendant_font.get('/Subtype', '')) != '/CIDFontType2':
+            return None
+        return descendant_font
+
+    if subtype == '/CIDFontType2':
+        return font_obj
+
+    return None
+
+
+def _find_embedded_font_stream(font_obj):
+    descriptor = font_obj.get('/FontDescriptor')
+    if descriptor is None:
+        return None
+
+    for key in ('/FontFile2', '/FontFile3', '/FontFile'):
+        stream = descriptor.get(key)
+        if stream is not None:
+            return stream
+
+    return None
+
+
+def _extract_font_program(font_obj):
+    font_stream = _find_embedded_font_stream(font_obj)
+    if font_stream is None:
+        return {}
+
+    unicode_to_gid, glyph_name_to_gid = _extract_font_program_maps(font_stream)
+    if not unicode_to_gid:
+        return {}
+
+    return {
+        'unicode_to_gid': unicode_to_gid,
+        'glyph_name_to_gid': glyph_name_to_gid,
+    }
+
+
+def _extract_font_program_maps(font_stream):
+    try:
+        from fontTools.ttLib import TTFont, TTLibError
+    except ImportError:
+        return {}, {}
+
+    try:
+        font = TTFont(BytesIO(bytes(font_stream.read_bytes())), lazy=True)
+    except (TTLibError, OSError, ValueError):
+        return {}, {}
+
+    try:
+        unicode_to_gid = {}
+        cmap = font.getBestCmap() or {}
+        _merge_unicode_to_gid_map(font, cmap, unicode_to_gid)
+
+        if not unicode_to_gid and 'cmap' in font:
+            for table in getattr(font['cmap'], 'tables', []):
+                if not table.isUnicode():
+                    continue
+                _merge_unicode_to_gid_map(font, table.cmap, unicode_to_gid)
+
+        glyph_name_to_gid = {}
+        for glyph_name in font.getGlyphOrder():
+            gid = _glyph_to_gid(font, glyph_name)
+            if gid is not None:
+                glyph_name_to_gid[glyph_name] = gid
+
+        return unicode_to_gid, glyph_name_to_gid
+    finally:
+        font.close()
+
+
+def _merge_unicode_to_gid_map(font, cmap, unicode_to_gid):
+    for unicode_codepoint, glyph in cmap.items():
+        gid = _glyph_to_gid(font, glyph)
+        if gid is not None:
+            unicode_to_gid.setdefault(int(unicode_codepoint), gid)
+
+
+def _glyph_to_gid(font, glyph):
+    if isinstance(glyph, int):
+        return glyph
+
+    try:
+        return font.getGlyphID(glyph)
+    except Exception:
+        return None
+
+
+def _read_simple_font_encoding(font_obj):
+    code_to_unicode = {}
+    code_to_glyph_name = {}
+
+    base_encoding_name = _resolve_base_encoding_name(font_obj)
+    if base_encoding_name:
+        _apply_base_encoding(code_to_unicode, code_to_glyph_name, base_encoding_name)
+
+    encoding = font_obj.get('/Encoding')
+    if hasattr(encoding, 'get'):
+        differences = encoding.get('/Differences')
+        if differences is not None:
+            _apply_encoding_differences(code_to_unicode, code_to_glyph_name, differences)
+
+    return code_to_unicode, code_to_glyph_name
+
+
+def _resolve_base_encoding_name(font_obj):
+    encoding = font_obj.get('/Encoding')
+    encoding_name = _normalize_pdf_name(encoding)
+    if encoding_name:
+        return encoding_name
+
+    if hasattr(encoding, 'get'):
+        base_name = _normalize_pdf_name(encoding.get('/BaseEncoding'))
+        if base_name:
+            return base_name
+
+    subtype = str(font_obj.get('/Subtype', ''))
+    if subtype in {'/Type1', '/MMType1'}:
+        return '/StandardEncoding'
+    if subtype == '/TrueType':
+        return '/WinAnsiEncoding'
+    return None
+
+
+def _apply_base_encoding(code_to_unicode, code_to_glyph_name, base_encoding_name):
+    if base_encoding_name == '/WinAnsiEncoding':
+        for code in range(256):
+            try:
+                text = bytes([code]).decode('cp1252')
+            except UnicodeDecodeError:
+                continue
+            if len(text) == 1:
+                code_to_unicode[code] = ord(text)
+        return
+
+    if base_encoding_name == '/MacRomanEncoding':
+        _apply_glyph_name_table(code_to_unicode, code_to_glyph_name, MacRoman.MacRoman)
+        return
+
+    if base_encoding_name == '/StandardEncoding':
+        _apply_glyph_name_table(code_to_unicode, code_to_glyph_name, StandardEncoding.StandardEncoding)
+
+
+def _apply_glyph_name_table(code_to_unicode, code_to_glyph_name, table):
+    for code, glyph_name in enumerate(table):
+        _assign_codepoint_mapping(code_to_unicode, code_to_glyph_name, code, glyph_name)
+
+
+def _apply_encoding_differences(code_to_unicode, code_to_glyph_name, differences):
+    current_code = None
+    for item in differences:
+        if isinstance(item, int):
+            current_code = item
+            continue
+        if current_code is None:
+            continue
+        glyph_name = _normalize_pdf_name(item)
+        if glyph_name:
+            _assign_codepoint_mapping(code_to_unicode, code_to_glyph_name, current_code, glyph_name.lstrip('/'))
+            current_code += 1
+
+
+def _assign_codepoint_mapping(code_to_unicode, code_to_glyph_name, code, glyph_name):
+    if not glyph_name or glyph_name == '.notdef':
+        return
+
+    bare_name = glyph_name.lstrip('/')
+    code_to_glyph_name[int(code)] = bare_name
+
+    try:
+        text = agl.toUnicode(bare_name)
+    except Exception:
+        return
+
+    if len(text) == 1:
+        code_to_unicode[int(code)] = ord(text)
+
+
+def _normalize_pdf_name(value):
+    text = str(value or '')
+    if not text or text == 'None':
+        return None
+    if text.startswith('/'):
+        return text
+    return f'/{text}'
+
+
+def _read_cid_to_gid_map(font_obj):
+    cid_to_gid = font_obj.get('/CIDToGIDMap')
+    if cid_to_gid is None or str(cid_to_gid) == '/Identity':
+        return None
+
+    try:
+        raw = bytes(cid_to_gid.read_bytes())
+    except Exception:
+        return {}
+
+    if len(raw) % 2:
+        raw = raw[:-1]
+
+    return {
+        cid: int.from_bytes(raw[offset:offset + 2], 'big')
+        for cid, offset in enumerate(range(0, len(raw), 2))
+        if int.from_bytes(raw[offset:offset + 2], 'big') > 0
+    }
+
+
+def _select_preferred_unicode(codepoints):
+    return min(codepoints, key=_unicode_preference_key)
+
+
+def _unicode_preference_key(codepoint):
+    return (
+        _unicode_semantic_rank(codepoint),
+        1 if _is_problematic_unicode(codepoint) else 0,
+        codepoint,
+    )
+
+
+def _unicode_semantic_rank(codepoint):
+    if not _is_valid_codepoint(codepoint):
+        return 6
+
+    category = unicodedata.category(chr(codepoint))
+    if category.startswith('L'):
+        return 0
+    if category.startswith('M'):
+        return 1
+    if category.startswith('N'):
+        return 2
+    if category.startswith('P'):
+        return 3
+    if category.startswith('S'):
+        return 4
+    if category.startswith('Z'):
+        return 5
+    return 6
+
+
+def _should_replace_with_font_unicode(current_unicode, candidate_unicode):
+    current_rank = _unicode_semantic_rank(current_unicode)
+    candidate_rank = _unicode_semantic_rank(candidate_unicode)
+
+    if candidate_rank > current_rank:
+        return False
+    if current_rank == candidate_rank:
+        return _is_problematic_unicode(current_unicode) and not _is_problematic_unicode(candidate_unicode)
+    return True
+
+
+def _is_problematic_unicode(codepoint):
+    if not _is_valid_codepoint(codepoint):
+        return True
+
+    category = unicodedata.category(chr(codepoint))
+    if category.startswith('C'):
+        return True
+
+    if _is_private_or_presentation(codepoint):
+        return True
+
+    return unicodedata.normalize('NFKC', chr(codepoint)) != chr(codepoint)
+
+
+def _is_valid_codepoint(codepoint):
+    return isinstance(codepoint, int) and 0 <= codepoint <= 0x10FFFF
+
+
+def _is_private_or_presentation(codepoint):
+    return (
+        0x2E80 <= codepoint <= 0x2EF3
+        or 0x2F00 <= codepoint <= 0x2FD5
+        or 0xE000 <= codepoint <= 0xF8FF
+        or 0xFB00 <= codepoint <= 0xFB4F
+        or 0xF900 <= codepoint <= 0xFAFF
+        or 0x2F800 <= codepoint <= 0x2FA1F
+        or 0xF0000 <= codepoint <= 0xFFFFD
+        or 0x100000 <= codepoint <= 0x10FFFD
+        or codepoint == 0x00AD
+    )

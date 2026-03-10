@@ -29,7 +29,7 @@ from collections import defaultdict
 from pathlib import Path
 import pikepdf
 
-from cmap_engine import collect_font_cmap_streams, find_fixes, parse_mappings, patch_cmap
+from cmap_engine import collect_font_cmap_records, find_fixes, parse_mappings, patch_cmap
 
 SUPPORTED_LANGUAGES = ('tr', 'en')
 MAX_CMAP_BYTES = 2 * 1024 * 1024
@@ -175,14 +175,14 @@ def fix_pdf(input_path, output_path=None, analyze_only=False, lang='tr'):
     summary = defaultdict(int)
 
     try:
-        for cmap_stream in collect_font_cmap_streams(pdf):
+        for font_obj, cmap_stream in collect_font_cmap_records(pdf):
             try:
                 cmap_text = read_cmap_text(cmap_stream, lang)
                 mappings = parse_mappings(
                     cmap_text,
                     lambda total_entries, span: consume_mapping_budget(total_entries, span, lang),
                 )
-                fixes = find_fixes(mappings)
+                fixes = find_fixes(mappings, font_obj)
                 if not fixes:
                     continue
 

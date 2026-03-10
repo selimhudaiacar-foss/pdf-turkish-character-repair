@@ -31,7 +31,7 @@ from flask import Flask, g, jsonify, render_template_string, request, send_file
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
-from cmap_engine import collect_font_cmap_streams, find_fixes, parse_mappings, patch_cmap
+from cmap_engine import collect_font_cmap_records, find_fixes, parse_mappings, patch_cmap
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
@@ -400,23 +400,23 @@ def build_fix_results(summary, lang):
 def analyze_pdf(pdf_source, lang):
     pdf = open_pdf(pdf_source)
     try:
-        cmap_streams = collect_font_cmap_streams(pdf)
+        cmap_records = collect_font_cmap_records(pdf)
         summary = defaultdict(int)
         page_count = len(pdf.pages)
-        for cmap_stream in cmap_streams:
+        for font_obj, cmap_stream in cmap_records:
             try:
                 cmap = read_cmap_text(cmap_stream, lang)
                 mappings = parse_mappings(
                     cmap,
                     lambda total_entries, span: consume_mapping_budget(total_entries, span, lang),
                 )
-                for _,(wrong,correct) in find_fixes(mappings).items():
+                for _,(wrong,correct) in find_fixes(mappings, font_obj).items():
                     summary[(wrong,correct)] += 1
             except PDFSecurityError:
                 raise
             except Exception:
                 continue
-        return build_fix_results(summary, lang), len(cmap_streams), page_count
+        return build_fix_results(summary, lang), len(cmap_records), page_count
     finally:
         pdf.close()
 
@@ -426,14 +426,15 @@ def fix_pdf_stream(pdf_source, lang):
     try:
         total = 0
         fonts_fixed = 0
-        for cmap_stream in collect_font_cmap_streams(pdf):
+        for font_obj, cmap_stream in collect_font_cmap_records(pdf):
             try:
                 cmap_text = read_cmap_text(cmap_stream, lang)
                 fixes = find_fixes(
                     parse_mappings(
                         cmap_text,
                         lambda total_entries, span: consume_mapping_budget(total_entries, span, lang),
-                    )
+                    ),
+                    font_obj,
                 )
                 if not fixes:
                     continue
@@ -457,20 +458,20 @@ def fix_pdf_stream(pdf_source, lang):
 def process_pdf_stream(pdf_source, filename, lang):
     pdf = open_pdf(pdf_source)
     try:
-        cmap_streams = collect_font_cmap_streams(pdf)
+        cmap_records = collect_font_cmap_records(pdf)
         summary = defaultdict(int)
         page_count = len(pdf.pages)
         patch_count = 0
         fonts_fixed = 0
 
-        for cmap_stream in cmap_streams:
+        for font_obj, cmap_stream in cmap_records:
             try:
                 cmap_text = read_cmap_text(cmap_stream, lang)
                 mappings = parse_mappings(
                     cmap_text,
                     lambda total_entries, span: consume_mapping_budget(total_entries, span, lang),
                 )
-                fixes = find_fixes(mappings)
+                fixes = find_fixes(mappings, font_obj)
                 if not fixes:
                     continue
 
@@ -489,7 +490,7 @@ def process_pdf_stream(pdf_source, filename, lang):
 
         response = {
             'fixes': build_fix_results(summary, lang),
-            'font_count': len(cmap_streams),
+            'font_count': len(cmap_records),
             'page_count': page_count,
             'patch_count': patch_count,
             'fonts_fixed': fonts_fixed,
