@@ -1,5 +1,32 @@
 # Changelog
 
+## v3.1 - 2026-03-10
+
+Bu sürüm `ToUnicode` onarımını yalnızca mevcut CMap içeriğine bakarak değil, mümkün olduğunda gömülü fontun kendi `cmap` verisini okuyarak yapar. Böylece bozuk eşlemeler font programındaki gerçek glyph ilişkileriyle doğrulanır; güvenli aday bulunamadığında mevcut Türkçe heuristikler fallback olarak korunur.
+
+### Eklenenler
+
+- Gömülü font programını okuyup `Unicode -> GID` eşlemeleri çıkaran font tabanlı onarım hattı eklendi.
+- `Type0/CIDFontType2` fontlar için `CIDToGIDMap` destekli `CID -> Unicode` geri eşleme akışı eklendi.
+- Basit `TrueType` ve `Type1` fontlar için PDF `Encoding` ve `Differences` verisini kullanan `charcode -> glyph -> GID` çözümleme desteği eklendi.
+- `fonttools` proje bağımlılıklarına eklendi.
+
+### İyileştirmeler
+
+- `find_fixes` akışı artık önce fontun kendi verisinden gelen daha güvenilir Unicode adaylarını değerlendiriyor.
+- Aynı glyph için birden fazla Unicode bulunduğunda harfleri ve semantik olarak daha anlamlı kod noktalarını tercih eden seçim kuralı eklendi.
+- Web ve CLI akışları font nesnesini CMap patch motoruna iletecek şekilde genişletildi.
+- Türkçe karakter düzeltmeleri artık yalnızca çevresel heuristiklere değil, desteklenen font tiplerinde doğrudan font verisine de dayanabiliyor.
+
+### Dokümantasyon
+
+- `README.md` font-cmap tabanlı yeni onarım mantığını ve desteklenen font yollarını açıklayacak şekilde güncellendi.
+
+### Doğrulama
+
+- `python3 -m unittest tests/test_cmap_engine.py`
+- `python3 -m py_compile app.py cmap_engine.py pdf_tr_fix.py`
+
 ## v3.0 - 2026-03-10
 
 Bu sürüm CMap onarım motorunu daha dayanıklı hale getirir ve web akışındaki çift upload maliyetini kaldırır. Boşluklu ve array tabanlı CMap tanımları daha doğru işlenir; paylaşılan `ToUnicode` akışları yerinde güncellenir; web arayüzü PDF'i tek istekte analiz edip onarır.
