@@ -126,6 +126,10 @@ Bu bölümdeki tüm komutlar, aktif bir `venv` içinde çalıştırılıyor vars
 
 ### Web arayüzü
 
+İndirmeden veya kurulum yapmadan önce demo sürümü deneyebilirsiniz:
+
+- [Render demo](https://pdf-turkish-character-repair.onrender.com/)
+
 ```bash
 python3 app.py
 ```
